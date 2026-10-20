@@ -57,6 +57,10 @@ jobs:
       API_TOKEN: ci-test-key-only-never-production-123456789
       COOKIE_SECURE: "false"
       ALLOW_PAID_AI: "false"
+      PROXY_SHARED_KEY: ci-proxy-key-only-never-production-987654321
+      BCA_HOSTNAME: localhost
+      PUBLIC_ORIGIN: https://localhost
+      HTTP_BIND: 127.0.0.1
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -68,9 +72,41 @@ jobs:
       - run: docker compose up -d --wait --wait-timeout 120
       - name: Verify sandbox properties, real rendering and durable restart
         run: python scripts/compose_smoke.py
+      - name: Validate production HTTPS configuration without provisioning a host
+        run: |
+          python scripts/deploy.py init --hostname blender.example.com --env-file "$RUNNER_TEMP/bca-production.env"
+          BCA_HOSTNAME=blender.example.com PUBLIC_ORIGIN=https://blender.example.com python scripts/deploy.py check --env-file "$RUNNER_TEMP/bca-production.env"
+      - name: Start private API behind the real HTTPS proxy with a CI-only CA
+        run: |
+          docker compose -f compose.yml -f compose.https.yml -f deploy/compose.test.yml build proxy
+          docker compose -f compose.yml -f compose.https.yml -f deploy/compose.test.yml up -d --wait --wait-timeout 120
+      - name: Verify TLS trust, secure sessions, origin checks and portable projects
+        env:
+          COMPOSE_FILE: compose.yml:compose.https.yml:deploy/compose.test.yml
+        run: python scripts/https_smoke.py
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Validate Android and desktop against the actual HTTPS containers
+        env:
+          BCA_E2E_BASE_URL: https://localhost
+          BCA_E2E_TOKEN: ci-test-key-only-never-production-123456789
+          BCA_E2E_REAL_WORKER: "true"
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: https-browser-reports
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
       - name: Container diagnostics
         if: failure()
-        run: docker compose logs --tail=100
+        run: docker compose -f compose.yml -f compose.https.yml -f deploy/compose.test.yml logs --tail=100
       - name: Clean up test containers and volume
         if: always()
-        run: docker compose down -v
+        run: docker compose -f compose.yml -f compose.https.yml -f deploy/compose.test.yml down -v --remove-orphans

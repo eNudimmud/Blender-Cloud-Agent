@@ -50,6 +50,8 @@ These are separate service containers sharing **one owner's database and artifac
 
 Storage admission uses recorded artifact bytes, not a strict filesystem quota; in-flight or interrupted work can exceed that accounting. There is no automated retention/garbage collection, deletion UI, rolling backup service, encrypted-at-rest store or cross-host object storage yet. Configure a host disk quota and operational backups before sustained use. Physical disk exhaustion cannot be solved by a SQLite counter.
 
+The optional HTTPS overlay removes the API host port and authenticates proxy-supplied client addresses with a separate shared key; arbitrary forwarded headers remain untrusted. The worker never receives that key.
+
 Cookie mutations require the custom CSRF header and reject a mismatched Origin. There is no cross-origin browser API/CORS. Set the exact `PUBLIC_ORIGIN` behind HTTPS; proxy headers are not implicitly trusted. Cookies expire; rotating `API_TOKEN` invalidates all signed sessions. Logout clears the current browser cookie, not every previously issued session. The in-app key is a single-workspace access secret, not production organization identity management.
 
 ## External AI and MCP
@@ -57,3 +59,5 @@ Cookie mutations require the custom CSRF header and reject a mismatched Origin. 
 Guided planning is local application logic and makes no network calls. The optional external planner is in the API only, behind an explicit spending gate, uses a fixed operator endpoint without redirects/retries, limits response bytes/tokens and validates the returned schema. It cannot render until a proposal is confirmed. Live model quality, provider billing and crash-safe exactly-once inference charges are outside the validated scope.
 
 MCP-for-Blender is excluded from runtime: see the pinned source review in `MCP_INTEGRATION.md`. A future MCP facade should expose these bounded HTTP actions rather than arbitrary Blender Python.
+
+Portable projects use a versioned JSON envelope, 32 KiB request bound and the same scene validation. Export contains saved name/scene and source revision only; import is idempotent and always creates a new project. It does not recreate jobs, conversations or rendered files. See `HTTPS_DEPLOYMENT.md` for full-volume backup boundaries.

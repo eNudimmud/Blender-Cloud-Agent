@@ -20,3 +20,7 @@ Idempotency keys: 8–100 ASCII letters/digits/underscores/hyphens; UUIDs are su
 ## Integration acceptance still pending
 
 Real Studio project mapping, IndexedDB-to-server transfer, permissions, artifact import, browser routing, and user acceptance tests must be implemented and validated in U*TTU. This repository supplies the backend contract; it does not claim an end-to-end Studio integration or multi-user identity federation.
+
+## Portable project exchange
+
+`GET /v1/projects/{id}/export` returns an authenticated `.bca.json` attachment (`format=blender-cloud-agent/project`, `format_version=1`). `POST /v1/projects/import` accepts that envelope plus an idempotency key and creates a new project without rendering or overwriting the source. The optional `source` metadata preserves provenance only, not write authority. Scene object IDs are retained. This offers an explicit transfer boundary for a future Studio importer, but does not contain artifacts/history or replace the Studio asset-storage import step.

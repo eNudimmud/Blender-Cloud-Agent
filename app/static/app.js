@@ -1,17 +1,29 @@
 const $ = (id) => document.getElementById(id);
 const labels = { queued: 'En attente', running: 'Blender travaille…', succeeded: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
 const errors = { timeout: 'Temps de rendu dépassé', worker_lost: 'Worker interrompu. Tu peux relancer le rendu.', blender_failed: 'Blender a échoué', worker_error: 'Worker indisponible', disk_full: 'Stockage plein', invalid_artifact: 'Fichiers incomplets', log_limit: 'Rendu interrompu' };
-const state = { project: null, jobs: [], proposals: [], viewer: null, viewerFailed: false, busy: false, authenticated: false, epoch: 0, shown: null, artifact: null };
+const state = { project: null, jobs: [], proposals: [], viewer: null, viewerFailed: false, busy: false, authenticated: false, agentMode: 'rules', epoch: 0, shown: null, artifact: null };
 function cacheGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
 function cacheSet(key, value) { try { value == null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch { /* Private browser: server persistence still works. */ } }
 function message(text = '') { $('feedback').textContent = text; }
 function element(tag, text, className) { const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node; }
+function pendingAction() {
+  try {
+    const pending = JSON.parse(cacheGet('bca.pending'));
+    if (!pending) return null;
+    if (typeof pending.body !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(pending.key) ||
+        !/^\/v1\/projects(?:\/import|\/[a-f0-9]{32}\/(?:chat|jobs|proposals\/[a-f0-9]{32}\/confirm))?$/.test(pending.path)) throw Error();
+    JSON.parse(pending.body);
+    return pending;
+  } catch { cacheSet('bca.pending', null); return null; }
+}
+function updatePendingButton() { $('resume-pending').hidden = !state.authenticated || !pendingAction(); }
 function loginScreen() {
   state.authenticated = false;
   state.epoch++;
   state.viewer?.dispose(); state.viewer = null; state.shown = null;
   $('workspace').hidden = true; $('login-panel').hidden = false;
   $('connection').textContent = 'Atelier verrouillé';
+  updatePendingButton();
 }
 async function request(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options,
@@ -27,23 +39,38 @@ async function request(path, options = {}) {
 }
 async function action(path, body = {}) {
   const serialized = JSON.stringify(body);
-  let pending;
-  try { pending = JSON.parse(cacheGet('bca.pending')); } catch { cacheSet('bca.pending', null); }
+  let pending = pendingAction();
   if (pending && (pending.path !== path || pending.body !== serialized)) throw new Error('Une demande attend la connexion. Recharge la page pour la reprendre.');
   pending ||= { path, body: serialized, key: crypto.randomUUID() };
   cacheSet('bca.pending', JSON.stringify(pending));
+  updatePendingButton();
   try {
     const result = await request(path, { method: 'POST', body: serialized, headers: { 'Idempotency-Key': pending.key } });
-    cacheSet('bca.pending', null); return result;
+    cacheSet('bca.pending', null); updatePendingButton(); return result;
   } catch (error) {
     if (error.status && error.status < 500) cacheSet('bca.pending', null);
+    updatePendingButton();
     throw error;
   }
+}
+async function resumePending(automatic = false) {
+  const pending = pendingAction();
+  if (!pending) return null;
+  if (automatic && state.agentMode === 'llm' && pending.path.endsWith('/chat')) {
+    message('Une demande IA attend ta décision. Reprendre l’envoi peut appeler de nouveau le fournisseur.');
+    updatePendingButton(); return null;
+  }
+  const result = await action(pending.path, JSON.parse(pending.body));
+  const projectId = /^\/v1\/projects(?:\/import)?$/.test(pending.path)
+    ? result.id : pending.path.match(/^\/v1\/projects\/([a-f0-9]{32})\//)?.[1];
+  if (projectId) cacheSet('bca.project', projectId);
+  message('Dernière demande reprise.');
+  return projectId;
 }
 async function locked(task) {
   if (state.busy) return;
   state.busy = true;
-  const inputs = [...$('workspace').querySelectorAll('button,select,input,textarea'), ...$('login-form').querySelectorAll('button,input')];
+  const inputs = [...document.querySelectorAll('button,select,input,textarea')];
   inputs.forEach((node) => node.disabled = true);
   message();
   try { await task(); } catch (error) {
@@ -157,6 +184,7 @@ async function openProject(id) {
   Object.assign(state, { project, jobs, proposals }); cacheSet('bca.project', id);
   $('projects').value = id; $('project-workspace').hidden = false; $('empty-state').hidden = true;
   $('project-name').value = project.name;
+  $('export-project').href = `/v1/projects/${id}/export`; $('export-project').hidden = false;
   $('scene-info').textContent = `Version ${project.revision} · ${project.scene.objects.length}/24 objets · Enregistrée sur le serveur`;
   renderChat(); renderJobs();
   const latest = jobs.find((job) => job.status === 'succeeded' && job.revision === project.revision);
@@ -181,15 +209,13 @@ async function poll() {
 async function startWorkspace() {
   state.authenticated = true; $('login-panel').hidden = true; $('workspace').hidden = false;
   $('connection').textContent = 'Atelier connecté';
-  const pendingText = cacheGet('bca.pending');
-  if (pendingText) {
-    try { const pending = JSON.parse(pendingText); await action(pending.path, JSON.parse(pending.body)); message('Dernière demande reprise.'); }
-    catch (error) { message(error.message); }
-  }
+  const capabilities = await request('/v1/capabilities');
+  state.agentMode = capabilities.agent_mode;
+  updatePendingButton();
+  try { await resumePending(true); } catch (error) { message(error.message); }
   const projects = await loadProjects();
   const selected = projects.find((project) => project.id === cacheGet('bca.project')) || projects[0];
   if (selected) await openProject(selected.id);
-  const capabilities = await request('/v1/capabilities');
   $('agent-label').textContent = capabilities.agent_mode === 'llm' ? 'Planificateur IA' : 'Assistant guidé';
   if (capabilities.agent_mode === 'llm') $('agent-description').textContent = capabilities.paid_ai_enabled ? 'IA externe activée par l’administrateur · Confirmation avant chaque rendu.' : 'IA externe désactivée. Aucun appel payant autorisé.';
   await poll();
@@ -198,6 +224,19 @@ $('login-form').addEventListener('submit', (event) => { event.preventDefault(); 
 $('logout').addEventListener('click', () => locked(async () => { await request('/v1/auth/session', { method: 'DELETE' }); cacheSet('bca.project', null); cacheSet('bca.pending', null); loginScreen(); }));
 $('projects').addEventListener('change', () => { if ($('projects').value) locked(() => openProject($('projects').value)); });
 $('new-project').addEventListener('click', () => locked(async () => { const project = await action('/v1/projects', { name: 'Nouveau projet' }); await loadProjects(); await openProject(project.id); }));
+$('resume-pending').addEventListener('click', () => locked(async () => { const id = await resumePending(); await loadProjects(); if (id) await openProject(id); await poll(); }));
+$('import-project').addEventListener('change', () => locked(async () => {
+  const file = $('import-project').files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 32768) { const error = new Error('Ce fichier dépasse la limite de 32 Kio.'); error.status = 413; throw error; }
+    let body;
+    try { body = JSON.parse(await file.text()); } catch { const error = new Error('Ce fichier ne contient pas un projet JSON valide.'); error.status = 422; throw error; }
+    const project = await action('/v1/projects/import', body);
+    await loadProjects(); await openProject(project.id);
+    message('Projet importé dans une nouvelle copie.');
+  } finally { $('import-project').value = ''; }
+}));
 $('name-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const project = await request(`/v1/projects/${state.project.id}`, { method: 'PUT', body: JSON.stringify({ name: $('project-name').value, scene: state.project.scene, revision: state.project.revision }) }); await loadProjects(); await openProject(project.id); }); });
 $('chat-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const pid = state.project.id; await action(`/v1/projects/${pid}/chat`, { message: $('message').value }); $('message').value = ''; state.proposals = await request(`/v1/projects/${pid}/chat`); renderChat(); }); });
 for (const suggestion of document.querySelectorAll('[data-prompt]')) suggestion.addEventListener('click', () => { $('message').value = suggestion.dataset.prompt; $('message').focus(); });
@@ -208,5 +247,9 @@ let polling = false;
 async function refresh() { if (polling || state.busy) return; polling = true; try { await poll(); } catch { $('connection').textContent = 'Reconnexion…'; } finally { polling = false; } }
 setInterval(refresh, 3000);
 document.addEventListener('visibilitychange', refresh);
-window.addEventListener('online', refresh);
+window.addEventListener('online', () => {
+  if (state.authenticated && !state.busy && pendingAction()) locked(async () => {
+    const id = await resumePending(true); await loadProjects(); if (id) await openProject(id); await poll();
+  }); else refresh();
+});
 request('/v1/auth/session').then((session) => session.authenticated ? locked(startWorkspace) : loginScreen()).catch(() => { loginScreen(); message('Serveur inaccessible. Réessaie après avoir retrouvé une connexion.'); });

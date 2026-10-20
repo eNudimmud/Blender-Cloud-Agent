@@ -1,0 +1,16 @@
+{
+    admin off
+    persist_config off
+    skip_install_trust
+    http_port 8080
+    https_port 8443
+}
+
+{$BCA_HOSTNAME} {
+    import /etc/caddy/tls.caddy
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy api:8000 {
+        header_up X-BCA-Client-IP {remote_host}
+        header_up X-BCA-Proxy-Key {$PROXY_SHARED_KEY}
+    }
+}

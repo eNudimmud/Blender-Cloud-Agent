@@ -36,6 +36,18 @@ class ProjectCreate(StrictModel):
     scene: SceneSpec = Field(default_factory=SceneSpec)
 
 
+class ProjectOrigin(StrictModel):
+    project_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    revision: int = Field(ge=1)
+
+
+class PortableProject(StrictModel):
+    format: Literal["blender-cloud-agent/project"] = "blender-cloud-agent/project"
+    format_version: Literal[1] = 1
+    project: ProjectCreate
+    source: ProjectOrigin | None = None
+
+
 class ProjectEdit(StrictModel):
     revision: int = Field(ge=1)
     name: str = Field(min_length=1, max_length=80)

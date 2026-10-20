@@ -79,3 +79,21 @@ def test_llm_caps_response(settings):
     with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b'x' * 65537))) as client:
         with pytest.raises(ValueError, match='volumineuse'):
             llm_plan(configured(settings), SceneSpec(), 'un cube', [], client)
+
+
+@pytest.mark.parametrize('color,expected', [('bleue', '#5d9ddd'), ('verte', '#77caba'),
+                                          ('blanche', '#eeeeee'), ('noire', '#333333')])
+def test_french_feminine_colors_match_request(color, expected):
+    plan = guided_plan(SceneSpec(), f'Ajoute une sphère {color}')
+    assert plan.scene.objects[0].color == expected
+
+
+@pytest.mark.parametrize('message', [
+    'Ajoute un cube x=oops', 'un cube x=2.3.4', 'un cube x=1 x=2', 'un cube taille 2.3.4',
+    'un cube x=NaN', 'un cube rouge bleu', "N’ajoute aucun cube", "Don't add a cube", 'Never add a cube',
+    'Ajoute un cube puis déplace-le x=2',
+])
+def test_guided_planner_does_not_partially_apply_ambiguous_requests(message):
+    scene = guided_plan(SceneSpec(), 'un cube').scene
+    assert guided_plan(scene, message).scene is None
+    assert len(scene.objects) == 1 and scene.objects[0].position == (0, 0, 0)

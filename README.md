@@ -12,15 +12,16 @@ The MVP supports bounded primitive scenes, persistent projects, conversational p
 - Add cubes, spheres and cylinders; change color/size/position or remove an object through the guided FR/EN assistant. Review actual proposed values, preview locally in 3D, then confirm to save and render.
 - Orbit with one finger, pinch to zoom, and pan with two fingers. Three.js is bundled and served by the API; no CDN requests at runtime. Show the real PNG and download links when WebGL is unavailable.
 - Queue jobs without blocking the API. Claim jobs transactionally, cancel queued/running work, enforce deadlines, fence obsolete workers and publish only complete artifacts with SHA-256 manifests.
-- Recover the selected project after a reload. Retain a pending action's request key in the browser session and replay it safely after reconnection/reload. Projects and jobs survive server restarts.
+- Export a portable `.bca.json` on Android and import it into a new copy; importing never overwrites the original or launches a render.
+- Recover the selected project after a reload. Retain a pending action's request key in the browser session and replay it safely after reconnection/reload or using **Reprendre l’envoi**. Ambiguous external-LLM planning requests require a manual retry. Projects and jobs survive server restarts.
 - Run the API without Blender and the worker in a separate non-root container: no network, read-only root, no capabilities or Docker socket, 2 CPU / 2 GiB / 128 PID limits, bounded tmpfs. One Blender process per worker at a time.
 - Authenticate with a private workspace key and an HttpOnly, SameSite cookie; support bearer authentication for a future U*TTU backend adapter.
 
 ## Validation
 
-On 2026-10-20: **52 Python tests passed**, including five executions of real Blender 4.5.3 LTS (cube, sphere, cylinder, combined scene and empty scene). **9 browser tests passed**, with 1 intentional skip for a touch-only test in the desktop profile. Android is Chromium/Pixel 7 emulation, including real touch-event orbit/pinch, not a physical-device certification. Narrow 320 px layout, network loss, restart persistence, artifact access and the PNG fallback are covered.
+On 2026-10-20: **88 Python tests passed**, including five executions of real Blender 4.5.3 LTS (cube, sphere, cylinder, combined scene and empty scene). **17 browser tests passed**, with 1 intentional skip for a touch-only test in the desktop profile. Android is Chromium/Pixel 7 emulation, including real touch-event orbit/pinch, not a physical-device certification. Narrow 320 px layout, foldable viewport changes, lost-response recovery, portable project export/import, restart persistence, artifact access and the PNG fallback are covered.
 
-Runtime Python dependencies were updated after auditing the earlier Starlette pin. The final local Python and production npm audits reported no known vulnerabilities. Docker is unavailable in the development environment; the dedicated GitHub Actions `containers` job builds both images, verifies the configured isolation, renders a real scene, and checks persistence after restarting both services. Its actual run is the authority for container validation.
+Runtime Python dependencies were updated after auditing the earlier Starlette pin. The final local Python and production npm audits reported no known vulnerabilities. Docker is unavailable in the development environment; the dedicated GitHub Actions `containers` job builds the service images, verifies the configured isolation, renders a real scene, checks restart persistence, and exercises the HTTPS proxy and browser path with a local test certificate. Its actual run is the authority for container validation.
 
 See [the detailed validation record](docs/VALIDATION.md) and [GitHub Actions](https://github.com/eNudimmud/Blender-Cloud-Agent/actions). Passing tests do not mean this service is already hosted or physically tested on Android.
 
@@ -38,7 +39,7 @@ docker compose up -d --wait
 
 For a developer using HTTP on the server's own localhost, set `COOKIE_SECURE=false` and open `http://127.0.0.1:8000`. By default the API binds only to server loopback and cookies require HTTPS.
 
-For Android access, put an HTTPS reverse proxy in front of that existing server, set `PUBLIC_ORIGIN=https://your-host.example` and keep `COOKIE_SECURE=true`. Open that HTTPS address on Android and enter the workspace key once. The worker exposes no port. No hosting account, paid VM, GPU, external AI request or deployment is provisioned by this repository.
+For Android access, use the tested [HTTPS deployment package](docs/HTTPS_DEPLOYMENT.md): `python3 scripts/deploy.py init --hostname your-host.example`, then `check` and `up` on an existing server. It generates private keys, sets the exact origin and secure cookies, and puts a pinned Caddy proxy in front of the private API. Open that HTTPS address on Android and enter the workspace key once. The worker exposes no port. No hosting account, paid VM, GPU, external AI request or deployment is provisioned by this repository.
 
 The named `agent-data` volume holds `agent.sqlite3` and `artifacts/`. It survives ordinary stop/restart/rebuild operations. Keep the same Compose project name and back up the complete volume while both services are stopped. `docker compose down -v` deletes that data; it is used only to clean up ephemeral CI data. Existing artifacts produced by the old `/v1/scenes` alpha are not automatically imported.
 
@@ -84,6 +85,7 @@ docs/           Architecture, validated scope, MCP study and U*TTU contract
 
 API schema: `/openapi.json`, scene schema: `/v1/schema/scene`, current capabilities: `/v1/capabilities`. Mutating project/chat/render requests use `Idempotency-Key`; revision conflicts return 409. The old synchronous `/v1/scenes` endpoint has been replaced by the asynchronous project/job API.
 
+- [HTTPS deployment and portable project recovery](docs/HTTPS_DEPLOYMENT.md)
 - [Architecture and security boundaries](docs/ARCHITECTURE.md)
 - [MCP-for-Blender assessment](docs/MCP_INTEGRATION.md): upstream explicitly refuses background mode and exposes arbitrary Python; it is not installed in this MVP.
 - [Future U*TTU Studio integration](docs/UTTU_INTEGRATION.md): server-side bearer adapter; no Studio repository modified.

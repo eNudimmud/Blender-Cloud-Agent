@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import time
 
@@ -7,6 +8,17 @@ from starlette.responses import JSONResponse
 
 COOKIE = "bca_session"
 MAX_BODY = 32768
+
+
+def client_address(request, proxy_key):
+    """Trust one address only when our reverse proxy authenticates the header."""
+    supplied = request.headers.get("x-bca-proxy-key", "")
+    if proxy_key and hmac.compare_digest(supplied.encode(), proxy_key.encode()):
+        try:
+            return str(ipaddress.ip_address(request.headers.get("x-bca-client-ip", "")))
+        except ValueError:
+            pass
+    return request.client.host if request.client else "unknown"
 
 
 def session_cookie(token):

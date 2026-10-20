@@ -20,6 +20,7 @@ from app.models import (
     ChatRequest,
     JobView,
     Login,
+    PortableProject,
     ProjectCreate,
     ProjectEdit,
     ProjectView,
@@ -27,7 +28,7 @@ from app.models import (
     RenderRequest,
     SceneSpec,
 )
-from app.security import COOKIE, BodyLimitMiddleware, authenticated, session_cookie
+from app.security import COOKIE, BodyLimitMiddleware, authenticated, client_address, session_cookie
 from app.store import Store, job_dict, project_dict, proposal_dict, require, uid
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -75,12 +76,17 @@ def create_app(settings=None):
                 except HTTPException as exc:
                     return JSONResponse({"detail": exc.detail}, exc.status_code, headers=exc.headers)
         response = await call_next(request)
+        return response
+
+    @app.middleware("http")
+    async def response_headers(request: Request, call_next):
+        response = await call_next(request)
         response.headers.update({
             "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
             "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
             "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
         })
-        if path.startswith("/v1/"):
+        if request.url.path.startswith("/v1/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -104,7 +110,7 @@ def create_app(settings=None):
 
     @app.post("/v1/auth/session")
     def login(request: Request, body: Login, response: Response):
-        store.rate_limit("login:" + (request.client.host if request.client else "unknown"), 5)
+        store.rate_limit("login:" + client_address(request, settings.proxy_key), 5)
         if not hmac.compare_digest(body.token.encode(), settings.api_token.encode()):
             raise HTTPException(401, "Clé incorrecte.")
         response.set_cookie(COOKIE, session_cookie(settings.api_token), max_age=43200,
@@ -153,6 +159,22 @@ def create_app(settings=None):
     @app.get("/v1/projects/{project_id}", response_model=ProjectView)
     def get_project(project_id: str):
         return store.get_project(project_id)
+
+    @app.post("/v1/projects/import", status_code=201, response_model=ProjectView)
+    def import_project(body: PortableProject, key: RequestKey):
+        # Always create a separate project. Source metadata never grants overwrite authority.
+        return create_project(body.project, key)
+
+    @app.get("/v1/projects/{project_id}/export", response_model=PortableProject)
+    def export_project(project_id: str):
+        project = store.get_project(project_id)
+        portable = PortableProject(
+            project=ProjectCreate(name=project["name"], scene=project["scene"]),
+            source={"project_id": project_id, "revision": project["revision"]},
+        )
+        return JSONResponse(portable.model_dump(mode="json"), headers={
+            "Content-Disposition": f'attachment; filename="project-{project_id}.bca.json"',
+        })
 
     @app.put("/v1/projects/{project_id}", response_model=ProjectView)
     def update_project(project_id: str, body: ProjectEdit):

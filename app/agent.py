@@ -15,6 +15,9 @@ COLORS = {
     "white": "#eeeeee", "noir": "#333333", "black": "#333333", "rose": "#e597c6", "pink": "#e597c6",
 }
 SHAPES = {"cube": "cube", "sphere": "sphere", "boule": "sphere", "cylindre": "cylinder", "cylinder": "cylinder"}
+COLOR_ALIASES = {"bleue": "bleu", "verte": "vert", "blanche": "blanc", "noire": "noir"}
+CREATE_WORDS = {"ajoute", "ajouter", "cree", "creer", "create", "add"}
+EDIT_WORDS = {"rends", "change", "modifie", "recolore", "deplace", "move", "resize", "remove", "supprime", "delete", "make", "set"}
 HELP = ("Je peux ajouter un cube, une sphère ou un cylindre, changer sa couleur ou sa taille, "
         "le déplacer (x=2 y=0 z=1) ou le supprimer. Une action par message. "
         "Exemple : « Ajoute un cube rouge de taille 2 ». Aucun rendu avant confirmation.")
@@ -23,26 +26,34 @@ HELP = ("Je peux ajouter un cube, une sphère ou un cylindre, changer sa couleur
 def guided_plan(scene: SceneSpec, message: str) -> AgentPlan:
     text = "".join(c for c in unicodedata.normalize("NFD", message.lower()) if unicodedata.category(c) != "Mn")
     words = set(re.findall(r"[a-z]+", text))
-    if (words & {"python", "exec", "execute", "script", "import", "telecharge", "download", "sans", "without", "not", "pas"}
+    words |= {COLOR_ALIASES.get(word, word) for word in words}
+    if (words & {"python", "exec", "execute", "script", "import", "telecharge", "download", "sans", "without", "not", "pas", "aucun", "aucune", "jamais", "never", "non"}
+            or re.search(r"\b(?:don['’]t|n['’])", text)
             or "http" in text or "__" in text):
         return AgentPlan(summary=HELP)
     found = [value for word, value in SHAPES.items() if word in words]
     if len(found) > 1 or re.search(r"\b(?:[2-9]|[1-9][0-9]+)\s+(?:cubes|spheres|cylindres|cylinders)\b", text):
         return AgentPlan(summary=HELP)
-    color = next((value for word, value in COLORS.items() if word in words), None)
+    colors = {value for word, value in COLORS.items() if word in words}
     hex_color = re.search(r"#[0-9a-f]{6}\b", text)
     if hex_color:
-        color = hex_color.group()
+        colors.add(hex_color.group())
+    if len(colors) > 1 or (words & CREATE_WORDS and words & EDIT_WORDS):
+        return AgentPlan(summary=HELP)
+    color = next(iter(colors), None)
     number = r"-?\d+(?:[.,]\d+)?(?:e[+-]?\d+)?"
-    size_match = re.search(r"\b(?:taille|size)\s*(?:de|of|a|=|:)?\s*(" + number + r")\b", text)
+    size_match = re.search(r"\b(?:taille|size)\s*(?:de|of|a|=|:)?\s*(" + number + r")(?=$|[\s;,])", text)
     if words & {"taille", "size"} and size_match is None:
         return AgentPlan(summary=HELP)
     size = float(size_match[1].replace(",", ".")) if size_match else None
-    axes = {axis: float(value.replace(",", ".")) for axis, value in
-            re.findall(r"\b([xyz])\s*=\s*(" + number + r")\b", text)}
-    if words & {"ajoute", "cree", "create", "add"} and not found:
+    axis_names = re.findall(r"\b([xyz])\s*=", text)
+    axis_values = re.findall(r"\b([xyz])\s*=\s*(" + number + r")(?=$|[\s;,])", text)
+    if len(axis_names) != len(axis_values) or len(set(axis_names)) != len(axis_names):
         return AgentPlan(summary=HELP)
-    edit = words & {"rends", "change", "modifie", "recolore", "deplace", "move", "resize", "remove", "supprime", "delete", "make", "set"}
+    axes = {axis: float(value.replace(",", ".")) for axis, value in axis_values}
+    if words & CREATE_WORDS and not found:
+        return AgentPlan(summary=HELP)
+    edit = words & EDIT_WORDS
     result = scene.model_copy(deep=True)
     if found and not edit:
         obj = SceneObject(shape=found[0], name=found[0].capitalize(), color=color or "#77caba",

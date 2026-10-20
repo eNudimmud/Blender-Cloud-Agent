@@ -6,7 +6,7 @@ Baseline inspected: `e6fc08d51297d84e465633df27116356a95922c1` on `main`, with t
 
 | Check | Observed result | Meaningful limits |
 | --- | --- | --- |
-| Python suite with `BLENDER_BIN` | 52 passed; no skips or warnings | Python 3.12.14, Linux x86_64; does not prove container isolation |
+| Python suite with `BLENDER_BIN` | 88 passed; no skips or warnings | Python 3.12.14, Linux x86_64; does not prove container isolation |
 | Real Blender integration | All 5 passed | Official Blender 4.5.3 LTS archive, SHA-256 checked; CPU rendering |
 | Real outputs | `.blend`, GLB v2, PNG 640×480, byte counts and hashes checked | Primitive scenes only; no animation/rigging/imported assets |
 | Persistence | API recreated over the same data path; project, chat, scene version and queued job retained | Local filesystem SQLite, not remote cloud database |
@@ -14,7 +14,7 @@ Baseline inspected: `e6fc08d51297d84e465633df27116356a95922c1` on `main`, with t
 | Authentication | Bearer/cookie access, tampering, CSRF/Origin refusal, login limit, token redaction, body bounds, authenticated files and symlink refusal passed | One owner, not multi-user authorization |
 | Conversation | FR/EN primitive creation, recolor, position, size, removal, limits, proposal review/confirm/idempotency/conflicts passed | Deterministic grammar by default |
 | External planner | Mock HTTP success, invalid scene/code fields, oversized response and disabled-spending zero-call gate passed | No actual LLM request, model quality, provider credits or billing tested |
-| Playwright Chromium | 9 passed; 1 intentional desktop skip of the touch-only test | 5 Android/Pixel 7 emulation checks, 4 desktop checks |
+| Playwright Chromium | 17 passed; 1 intentional desktop skip of the touch-only test | 9 Android/Pixel 7 emulation checks, 8 desktop checks |
 | Touch viewer | Real synthetic touch orbit and two-touch pinch changed rendered screenshots | Emulated touch, not a physical phone/GPU certification |
 | Mobile UI | Full real-render/download/reload path, offline request replay, 320 px layout, inert text handling and real PNG fallback passed | No runtime third-party asset requests in the tested path; offline creation/render execution is not supported |
 | Runtime Python dependency audit | No known vulnerabilities reported after updating FastAPI/Starlette and pinning resolved runtime dependencies | Snapshot audit, not a security guarantee |
@@ -34,6 +34,12 @@ The `MVP validation` workflow has two independent standard Linux jobs:
 
 Docker is not available in the local execution environment, so no local Docker success is claimed. Consult the linked GitHub Actions run/PR checks for the actual container-job outcome and exact commit SHA. The CI smoke data is ephemeral and removed at the end; no cloud hosting is created.
 
+## Mobile portability and HTTPS follow-up
+
+The local expanded suite passes 88 Python tests and 17 browser tests (one desktop-only touch skip). New checks cover feminine French colors, malformed coordinates, contradictory requests, portable-project round trips/idempotency/limits, trusted proxy address handling, exact origin validation and exclusive/private deployment configuration creation. The browser path covers file download/import, malformed or oversized imports, a server-committed request whose response is lost, manual retry without duplication, and viewport changes 344→822→393 px. Imports preserve scene data in a new project and create no render jobs.
+
+The HTTPS overlay and CI smoke checks are included; use the current PR/run outcome before claiming they passed. The `containers` job now also builds a pinned Caddy proxy, validates the production deployment configuration without contacting an ACME service, tests TLS against a generated local CA, and runs the same browser profiles against the actual HTTPS API/Blender containers. This does not validate a public host or physical Android device. Baseline real-container/restart validation passed at commit `e042f396832f2a5e49cfe80db593c4a1d83de810`, run [39415092641](https://github.com/eNudimmud/Blender-Cloud-Agent/actions/runs/39415092641).
+
 ## Still pending
 
-Physical Android and foldable-device acceptance; public HTTPS hosting and proxy verification; real external LLM quality/billing tests (requires explicit authorization); native U*TTU import/mapping; an MCP adapter; arbitrary assets, richer scene operations, animation, GPU rendering, multiple owners and stronger per-job/per-tenant isolation. A PWA manifest is supplied, but offline service-worker operation and installation prompts have not been validated.
+Physical Android and foldable-device acceptance; public HTTPS hosting and a publicly trusted certificate; real external LLM quality/billing tests (requires explicit authorization); native U*TTU import/mapping; an MCP adapter; arbitrary assets, richer scene operations, animation, GPU rendering, multiple owners and stronger per-job/per-tenant isolation. A PWA manifest is supplied, but offline service-worker operation and installation prompts have not been validated.

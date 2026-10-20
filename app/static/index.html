@@ -13,6 +13,7 @@
   <main class="shell">
     <header><a class="brand" href="/">◈ <span>BLENDER CLOUD<small>Ton atelier 3D, dans la poche.</small></span></a><span id="connection" class="badge">Connexion…</span></header>
     <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+    <button id="resume-pending" class="secondary" hidden>Reprendre l’envoi</button>
     <section id="login-panel" class="panel narrow" hidden>
       <p class="eyebrow">ESPACE PERSONNEL</p><h1>Ouvre ton atelier.</h1>
       <p>Crée et retrouve tes scènes sur ton téléphone. Blender travaille sur le serveur.</p>
@@ -20,6 +21,7 @@
     </section>
     <div id="workspace" hidden>
       <section class="project-bar" aria-label="Projets"><div class="grow"><label for="projects">MES PROJETS</label><select id="projects"><option value="">Choisir un projet</option></select></div><button id="new-project" class="secondary">+ Nouveau</button></section>
+      <div class="project-files"><label class="file-picker" for="import-project">Importer un projet</label><input id="import-project" class="sr-only" type="file" accept=".json,application/json"><a id="export-project" download hidden>Exporter le projet</a></div>
       <div id="empty-state" class="panel narrow" hidden><h1>Une idée, puis une scène.</h1><p>Crée ton premier projet pour commencer. Il sera enregistré dans ton atelier.</p></div>
       <div id="project-workspace" hidden>
         <section class="viewer" aria-label="Aperçu de la scène">
