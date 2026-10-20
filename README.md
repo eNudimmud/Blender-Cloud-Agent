@@ -26,3 +26,13 @@ The response returns links to `scene.blend`, `scene.glb`, and `preview.png`. Sha
 3. Typed scene edits, versions and rollback.
 4. Optional LLM planner and MCP-for-Blender adapter.
 5. U*TTU Studio API integration.
+
+## Mobile UI (new)
+
+Open `http://127.0.0.1:8000/` after starting the container to access the mobile-first prototype. The interface provides a touch GLB viewer, a simple shape creation form, and artifact downloads. The Three.js modules currently load from a public CDN, so the viewer needs Internet access.
+
+This is **not** yet a deployed Android-accessible service. For remote phone access, first add authentication, rate limits, isolated execution, and HTTPS. Do not publish the current unauthenticated API.
+
+## Automated checks
+
+`pytest -q` runs API smoke tests (install `pytest httpx` alongside requirements). GitHub Actions runs these checks on push and pull request. Blender generation itself still requires a Docker/Blender integration test.
