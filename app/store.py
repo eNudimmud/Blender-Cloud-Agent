@@ -1,4 +1,5 @@
 """SQLite on one host/local volume. Transactions serialize claims and revisions."""
+import fcntl
 import json
 import sqlite3
 import time
@@ -6,6 +7,8 @@ import uuid
 from contextlib import contextmanager
 
 from fastapi import HTTPException
+
+HISTORY_LIMIT = 100
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -24,13 +27,22 @@ CREATE TABLE IF NOT EXISTS proposals (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
  base_revision INTEGER NOT NULL, message TEXT NOT NULL, summary TEXT NOT NULL,
  scene TEXT, mode TEXT NOT NULL, request_key TEXT NOT NULL,
- job_id TEXT REFERENCES jobs(id), created_at REAL NOT NULL,
+ job_id TEXT REFERENCES jobs(id), created_at REAL NOT NULL, request_fingerprint TEXT,
  UNIQUE(project_id, request_key)
 );
 CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, seen_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS rates (key TEXT PRIMARY KEY, window INTEGER, count INTEGER);
 CREATE TABLE IF NOT EXISTS project_keys (
  key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id)
+);
+CREATE TABLE IF NOT EXISTS project_versions (
+ project_id TEXT NOT NULL REFERENCES projects(id), revision INTEGER NOT NULL,
+ name TEXT NOT NULL, scene TEXT NOT NULL, saved_at REAL NOT NULL, reason TEXT NOT NULL,
+ restored_from INTEGER, PRIMARY KEY(project_id, revision)
+);
+CREATE TABLE IF NOT EXISTS restore_keys (
+ project_id TEXT NOT NULL REFERENCES projects(id), key TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, response TEXT NOT NULL, PRIMARY KEY(project_id, key)
 );
 """
 
@@ -51,11 +63,21 @@ def project_dict(row):
     return result
 
 
+def version_dict(row, include_scene=False):
+    result = require(row, "Version non disponible dans l’historique conservé.")
+    scene = json.loads(result.pop("scene"))
+    result["object_count"] = len(scene["objects"])
+    if include_scene:
+        result["scene"] = scene
+    return result
+
+
 def proposal_dict(row):
     result = require(row, "Proposal not found")
     result["scene"] = json.loads(result["scene"]) if result["scene"] else None
     result["supported"] = result["scene"] is not None
     result.pop("request_key", None)
+    result.pop("request_fingerprint", None)
     return result
 
 
@@ -82,13 +104,40 @@ class Store:
     def initialize(self):
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "artifacts").mkdir(exist_ok=True)
+        # SQLite's journal-mode transition can fail immediately under simultaneous
+        # startup. The same-host lock covers that transition as well as schema DDL;
+        # the OS releases it if an initializer exits unexpectedly.
+        with (self.root / "schema.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._initialize_schema()
+
+    def _initialize_schema(self):
         with self.connect() as con:
-            version = con.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
-                raise RuntimeError("Unsupported database schema")
             con.execute("PRAGMA journal_mode=WAL")
-            con.executescript(SCHEMA)
-            con.execute("PRAGMA user_version=1")
+        with self.connect(write=True) as con:
+            version = con.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1, 2):
+                raise RuntimeError("Unsupported database schema")
+            # Transactional DDL: API and worker may initialize the same volume together.
+            for statement in SCHEMA.split(";"):
+                if statement.strip():
+                    con.execute(statement)
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(proposals)")}
+            if "request_fingerprint" not in columns:
+                con.execute("ALTER TABLE proposals ADD COLUMN request_fingerprint TEXT")
+            con.execute("""INSERT OR IGNORE INTO project_versions
+                (project_id,revision,name,scene,saved_at,reason)
+                SELECT id,revision,name,scene,updated_at,'migration' FROM projects""")
+            con.execute("PRAGMA user_version=2")
+
+    def record_version(self, con, project_id, reason, restored_from=None):
+        con.execute("""INSERT INTO project_versions
+            (project_id,revision,name,scene,saved_at,reason,restored_from)
+            SELECT id,revision,name,scene,updated_at,?,? FROM projects WHERE id=?""",
+                    (reason, restored_from, project_id))
+        con.execute("""DELETE FROM project_versions WHERE project_id=? AND revision NOT IN
+            (SELECT revision FROM project_versions WHERE project_id=? ORDER BY revision DESC LIMIT ?)""",
+                    (project_id, project_id, HISTORY_LIMIT))
 
     @contextmanager
     def connect(self, write=False):

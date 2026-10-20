@@ -49,6 +49,8 @@ docker compose -f compose.yml -f compose.https.yml stop
 
 Back up the entire `agent-data` volume while API and worker are stopped for a complete database/artifact copy. Preserve `caddy-data` for certificates as well. Normal stop/restart/rebuild keeps these named volumes. Do not use `down -v` on a real workspace. Automatic backups, encrypted off-host storage and backup rotation are still operator responsibilities.
 
+Version 0.3 upgrades the SQLite schema from v1 to v2 on startup. Back up the stopped data volume before upgrading; start API and worker from the same code revision. The migration preserves existing projects/jobs/proposals and seeds only each project's current saved version. New changes retain at most 100 name/scene snapshots. Reverting to the earlier API requires restoring the pre-upgrade volume or using compatible code; do not manually change `PRAGMA user_version`. See [mobile editing and upgrade behavior](MOBILE_EDITING.md).
+
 From Android, **Exporter le projet** downloads a portable `.bca.json` containing the saved project name and declarative scene. **Importer un projet** creates a new copy, preserving its object IDs and values. The original is not overwritten and no render/provider request is triggered by import. This is a project transfer/recovery format, not a full server backup: it excludes conversation history, job states, `.blend`/GLB/PNG files and credentials. Download rendered files separately or preserve the full server volume.
 
 ## CI evidence and remaining boundary

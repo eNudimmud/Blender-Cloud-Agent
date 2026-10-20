@@ -26,10 +26,13 @@ from app.models import (
     ProjectView,
     ProposalView,
     RenderRequest,
+    RestoreRequest,
     SceneSpec,
+    VersionSummary,
+    VersionView,
 )
 from app.security import COOKIE, BodyLimitMiddleware, authenticated, client_address, session_cookie
-from app.store import Store, job_dict, project_dict, proposal_dict, require, uid
+from app.store import HISTORY_LIMIT, Store, job_dict, project_dict, proposal_dict, require, uid, version_dict
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 RequestKey = Annotated[str, Header(alias="Idempotency-Key", pattern=r"^[A-Za-z0-9_-]{8,100}$")]
@@ -45,7 +48,7 @@ def create_app(settings=None):
         store.initialize()
         yield
 
-    app = FastAPI(title="Blender Cloud Agent", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Blender Cloud Agent", version="0.3.0", lifespan=lifespan)
     app.state.store = store
     app.state.settings = settings
     app.add_middleware(BodyLimitMiddleware)
@@ -128,7 +131,8 @@ def create_app(settings=None):
         return {"schema_version": 1, "agent_mode": settings.agent_mode,
                 "paid_ai_enabled": settings.allow_paid_ai, "workers_online": count,
                 "shapes": ["cube", "sphere", "cylinder"], "max_objects": 24,
-                "workspace": "single-owner", "mcp_enabled": False}
+                "workspace": "single-owner", "mcp_enabled": False,
+                "object_selection": True, "retained_project_versions": HISTORY_LIMIT}
 
     @app.get("/v1/schema/scene")
     def scene_schema():
@@ -154,6 +158,7 @@ def create_app(settings=None):
             con.execute("INSERT INTO projects VALUES (?,?,?,1,?,?)",
                         (project_id, body.name, body.scene.model_dump_json(), now, now))
             con.execute("INSERT INTO project_keys VALUES (?,?,?)", (key, fingerprint, project_id))
+            store.record_version(con, project_id, "created")
             return project_dict(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
 
     @app.get("/v1/projects/{project_id}", response_model=ProjectView)
@@ -184,7 +189,49 @@ def create_app(settings=None):
                 raise HTTPException(409, "Le projet a changé. Recharge sa dernière version.")
             con.execute("UPDATE projects SET name=?,scene=?,revision=revision+1,updated_at=? WHERE id=?",
                         (body.name, body.scene.model_dump_json(), time.time(), project_id))
+            store.record_version(con, project_id, "edited")
             return project_dict(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+
+    @app.get("/v1/projects/{project_id}/versions", response_model=list[VersionSummary])
+    def list_versions(project_id: str):
+        store.get_project(project_id)
+        with store.connect() as con:
+            return [version_dict(row) for row in con.execute(
+                "SELECT * FROM project_versions WHERE project_id=? ORDER BY revision DESC LIMIT ?",
+                (project_id, HISTORY_LIMIT))]
+
+    @app.get("/v1/projects/{project_id}/versions/{revision}", response_model=VersionView)
+    def get_version(project_id: str, revision: int):
+        store.get_project(project_id)
+        with store.connect() as con:
+            return version_dict(con.execute("SELECT * FROM project_versions WHERE project_id=? AND revision=?",
+                                            (project_id, revision)).fetchone(), include_scene=True)
+
+    @app.post("/v1/projects/{project_id}/restore", response_model=ProjectView)
+    def restore_version(project_id: str, body: RestoreRequest, key: RequestKey):
+        fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        with store.connect(write=True) as con:
+            project = require(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+            old = con.execute("SELECT * FROM restore_keys WHERE project_id=? AND key=?", (project_id, key)).fetchone()
+            if old:
+                if old["fingerprint"] != fingerprint:
+                    raise HTTPException(409, "Clé déjà utilisée pour une autre restauration.")
+                return json.loads(old["response"])
+            if project["revision"] != body.revision:
+                raise HTTPException(409, "Le projet a changé. Vérifie sa dernière version avant de restaurer.")
+            if body.source_revision == project["revision"]:
+                raise HTTPException(409, "Cette version est déjà la version actuelle.")
+            source = require(con.execute("SELECT * FROM project_versions WHERE project_id=? AND revision=?",
+                                         (project_id, body.source_revision)).fetchone(), "Version non disponible.")
+            if con.execute("SELECT COUNT(*) FROM restore_keys").fetchone()[0] >= 2000:
+                raise HTTPException(429, "Limite de restaurations atteinte.")
+            scene = SceneSpec.model_validate_json(source["scene"])
+            con.execute("UPDATE projects SET name=?,scene=?,revision=revision+1,updated_at=? WHERE id=?",
+                        (source["name"], scene.model_dump_json(), time.time(), project_id))
+            store.record_version(con, project_id, "restored", body.source_revision)
+            result = project_dict(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+            con.execute("INSERT INTO restore_keys VALUES (?,?,?,?)", (project_id, key, fingerprint, json.dumps(result)))
+            return result
 
     @app.get("/v1/projects/{project_id}/jobs", response_model=list[JobView])
     def list_jobs(project_id: str):
@@ -238,20 +285,33 @@ def create_app(settings=None):
     @app.post("/v1/projects/{project_id}/chat", status_code=201, response_model=ProposalView)
     def chat(project_id: str, body: ChatRequest, key: RequestKey):
         project = store.get_project(project_id)
+        fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+
+        def replay(old):
+            if old is None:
+                return None
+            matches = (old["request_fingerprint"] == fingerprint if old["request_fingerprint"] else
+                       old["message"] == body.message and body.object_id is None and body.revision is None)
+            if not matches:
+                raise HTTPException(409, "Clé déjà utilisée pour un autre message ou une autre sélection.")
+            return proposal_dict(old)
+
         with store.connect() as con:
             old = con.execute("SELECT * FROM proposals WHERE project_id=? AND request_key=?", (project_id, key)).fetchone()
             if old:
-                if old["message"] != body.message:
-                    raise HTTPException(409, "Clé déjà utilisée pour un autre message.")
-                return proposal_dict(old)
+                return replay(old)
+        if body.revision is not None and body.revision != project["revision"]:
+            raise HTTPException(409, "Le projet a changé. Vérifie la scène avant de préparer une modification.")
+        if body.object_id and not any(obj["id"] == body.object_id for obj in project["scene"]["objects"]):
+            raise HTTPException(422, "L’objet sélectionné n’existe plus dans cette version.")
         store.rate_limit("planner", 20)
         try:
             scene = SceneSpec.model_validate(project["scene"])
             if settings.agent_mode == "llm":
                 history = [{"request": p["message"], "summary": p["summary"]} for p in chat_history(project_id)[-6:]]
-                plan = llm_plan(settings, scene, body.message, history)
+                plan = llm_plan(settings, scene, body.message, history, object_id=body.object_id)
             else:
-                plan = guided_plan(scene, body.message)
+                plan = guided_plan(scene, body.message, body.object_id)
         except ValidationError:
             raise HTTPException(422, "La proposition dépasse les limites de la scène. Taille 0,1–20 ; positions −50–50 ; 24 objets maximum.") from None
         except (ValueError, httpx.HTTPError, KeyError, TypeError):
@@ -259,9 +319,7 @@ def create_app(settings=None):
         with store.connect(write=True) as con:
             old = con.execute("SELECT * FROM proposals WHERE project_id=? AND request_key=?", (project_id, key)).fetchone()
             if old:
-                if old["message"] != body.message:
-                    raise HTTPException(409, "Clé déjà utilisée.")
-                return proposal_dict(old)
+                return replay(old)
             current = require(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
             if current["revision"] != project["revision"]:
                 raise HTTPException(409, "Le projet a changé pendant la préparation. Réessaie.")
@@ -269,9 +327,10 @@ def create_app(settings=None):
                 raise HTTPException(429, "Limite de conversation atteinte.")
             proposal_id = uid()
             con.execute("""INSERT INTO proposals
-                (id,project_id,base_revision,message,summary,scene,mode,request_key,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?)""", (proposal_id, project_id, project["revision"], body.message,
-                        plan.summary, plan.scene.model_dump_json() if plan.scene else None, settings.agent_mode, key, time.time()))
+                (id,project_id,base_revision,message,summary,scene,mode,request_key,created_at,request_fingerprint)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""", (proposal_id, project_id, project["revision"], body.message,
+                        plan.summary, plan.scene.model_dump_json() if plan.scene else None, settings.agent_mode,
+                        key, time.time(), fingerprint))
             return proposal_dict(con.execute("SELECT * FROM proposals WHERE id=?", (proposal_id,)).fetchone())
 
     @app.post("/v1/projects/{project_id}/proposals/{proposal_id}/confirm", status_code=202, response_model=JobView)
@@ -289,6 +348,7 @@ def create_app(settings=None):
             con.execute("UPDATE projects SET scene=?,revision=revision+1,updated_at=? WHERE id=?", (proposal["scene"], time.time(), project_id))
             updated = dict(con.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
             job = store.enqueue(con, updated, "proposal_" + proposal_id)
+            store.record_version(con, project_id, "confirmed")
             con.execute("UPDATE proposals SET job_id=? WHERE id=?", (job["id"], proposal_id))
             return job_dict(job)
 

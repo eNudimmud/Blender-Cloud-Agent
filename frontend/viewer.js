@@ -13,7 +13,7 @@ function disposeTree(root) {
   });
 }
 
-export function createViewer(container, onLost) {
+export function createViewer(container, onLost, onSelect = () => {}) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 2000);
   camera.position.set(5, 4, 6);
@@ -41,6 +41,46 @@ export function createViewer(container, onLost) {
   let generation = 0;
   let frame = 0;
   let disposed = false;
+  let selectedId = null;
+  let selection = null;
+  const pointers = new Set();
+  let tap = null;
+  function select(id) {
+    selectedId = id;
+    if (selection) { scene.remove(selection); disposeTree(selection); selection = null; }
+    let target = null;
+    model?.traverse((node) => { if (node.userData.bca_object_id === id) target = node; });
+    if (target) { selection = new THREE.BoxHelper(target, 0xf1d382); scene.add(selection); }
+    renderer.domElement.dataset.selectedObject = target ? id : '';
+    invalidate();
+  }
+  function pointerDown(event) {
+    pointers.add(event.pointerId);
+    tap = pointers.size === 1 && event.button === 0
+      ? { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now() } : null;
+  }
+  function pointerMove(event) {
+    if (tap && Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 8) tap = null;
+  }
+  function pointerUp(event) {
+    if (tap?.id === event.pointerId && pointers.size === 1 && performance.now() - tap.at < 700 && model
+        && Math.hypot(event.clientX - tap.x, event.clientY - tap.y) <= 8) {
+      const bounds = renderer.domElement.getBoundingClientRect();
+      const point = new THREE.Vector2((event.clientX - bounds.left) / bounds.width * 2 - 1,
+                                     -(event.clientY - bounds.top) / bounds.height * 2 + 1);
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(point, camera);
+      let target = ray.intersectObject(model, true)[0]?.object;
+      while (target && !target.userData.bca_object_id) target = target.parent;
+      onSelect(target?.userData.bca_object_id || null);
+    }
+    pointers.delete(event.pointerId); tap = null;
+  }
+  function pointerCancel(event) { pointers.delete(event.pointerId); tap = null; }
+  renderer.domElement.addEventListener('pointerdown', pointerDown);
+  renderer.domElement.addEventListener('pointermove', pointerMove);
+  renderer.domElement.addEventListener('pointerup', pointerUp);
+  renderer.domElement.addEventListener('pointercancel', pointerCancel);
   function invalidate() {
     if (!frame && !disposed && !document.hidden) frame = requestAnimationFrame(draw);
   }
@@ -83,6 +123,7 @@ export function createViewer(container, onLost) {
     scene.add(model);
     container.dataset.modelLoaded = 'true';
     reset();
+    select(selectedId);
   }
   controls.addEventListener('change', invalidate);
   const observer = new ResizeObserver(resize);
@@ -107,6 +148,7 @@ export function createViewer(container, onLost) {
           : object.shape === 'sphere' ? new THREE.SphereGeometry(half, 32, 16)
             : new THREE.CylinderGeometry(half, half, object.size, 48);
         const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.38 }));
+        mesh.userData.bca_object_id = object.id;
         const [x, y, z] = object.position;
         mesh.position.set(x, z, -y);
         group.add(mesh);
@@ -114,6 +156,7 @@ export function createViewer(container, onLost) {
       replace(group);
     },
     reset,
+    select,
     dispose() {
       disposed = true;
       generation++;
@@ -121,6 +164,11 @@ export function createViewer(container, onLost) {
       observer.disconnect();
       document.removeEventListener('visibilitychange', invalidate);
       controls.dispose();
+      renderer.domElement.removeEventListener('pointerdown', pointerDown);
+      renderer.domElement.removeEventListener('pointermove', pointerMove);
+      renderer.domElement.removeEventListener('pointerup', pointerUp);
+      renderer.domElement.removeEventListener('pointercancel', pointerCancel);
+      disposeTree(selection);
       disposeTree(model);
       disposeTree(grid);
       renderer.dispose();

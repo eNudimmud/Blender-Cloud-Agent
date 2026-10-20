@@ -23,7 +23,7 @@ HELP = ("Je peux ajouter un cube, une sphère ou un cylindre, changer sa couleur
         "Exemple : « Ajoute un cube rouge de taille 2 ». Aucun rendu avant confirmation.")
 
 
-def guided_plan(scene: SceneSpec, message: str) -> AgentPlan:
+def guided_plan(scene: SceneSpec, message: str, object_id=None) -> AgentPlan:
     text = "".join(c for c in unicodedata.normalize("NFD", message.lower()) if unicodedata.category(c) != "Mn")
     words = set(re.findall(r"[a-z]+", text))
     words |= {COLOR_ALIASES.get(word, word) for word in words}
@@ -62,7 +62,8 @@ def guided_plan(scene: SceneSpec, message: str) -> AgentPlan:
         result.objects.append(obj)
         summary = f"Ajouter {obj.name.lower()}, taille {obj.size:g}, couleur {obj.color}."
     elif result.objects:
-        candidates = [obj for obj in result.objects if not found or obj.shape == found[0]]
+        candidates = [obj for obj in result.objects
+                      if (not object_id or obj.id == object_id) and (not found or obj.shape == found[0])]
         if not candidates:
             return AgentPlan(summary="Cet objet n’existe pas dans le projet. " + HELP)
         obj = candidates[-1]
@@ -86,7 +87,16 @@ def guided_plan(scene: SceneSpec, message: str) -> AgentPlan:
     return AgentPlan(summary=summary, scene=SceneSpec.model_validate(result.model_dump()))
 
 
-def llm_plan(settings, scene, message, history, client=None):
+def protect_selection(scene, plan, object_id):
+    if object_id and plan.scene is not None:
+        result = {obj.id: obj for obj in plan.scene.objects}
+        for obj in scene.objects:
+            if obj.id != object_id and result.get(obj.id) != obj:
+                raise ValueError("La proposition modifie un objet hors de la sélection.")
+    return plan
+
+
+def llm_plan(settings, scene, message, history, client=None, object_id=None):
     if not settings.allow_paid_ai:
         raise ValueError("L’IA externe est désactivée : aucune autorisation de dépenses.")
     url = urlsplit(settings.llm_url)
@@ -99,11 +109,14 @@ def llm_plan(settings, scene, message, history, client=None):
         + ". Keep existing object IDs. Use only the 3 allowed primitives. Summarize in French. "
         "For unsupported requests set scene=null. Never return code, URLs, tools, file paths or paid actions. "
         "The user will review and explicitly confirm every edit. Scene units are meters, Z is up."
+        " If selected_object_id is present, only that existing object may be edited or removed;"
+        " leave every other existing object unchanged. New objects may be added."
     )
     payload = {"model": settings.llm_model, "temperature": 0, "max_tokens": 1800,
                "response_format": {"type": "json_object"}, "messages": [
                    {"role": "system", "content": system},
-                   {"role": "user", "content": json.dumps({"scene": scene.model_dump(), "history": history[-6:], "request": message})},
+                   {"role": "user", "content": json.dumps({"scene": scene.model_dump(), "history": history[-6:],
+                                                        "selected_object_id": object_id, "request": message})},
                ]}
     owned = client is None
     client = client or httpx.Client(timeout=25, follow_redirects=False, trust_env=False)
@@ -117,7 +130,7 @@ def llm_plan(settings, scene, message, history, client=None):
                 if len(body) > 65536:
                     raise ValueError("Réponse IA trop volumineuse.")
         content = json.loads(body)["choices"][0]["message"]["content"]
-        return AgentPlan.model_validate_json(content)
+        return protect_selection(scene, AgentPlan.model_validate_json(content), object_id)
     finally:
         if owned:
             client.close()

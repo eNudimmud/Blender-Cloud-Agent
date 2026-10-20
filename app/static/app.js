@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const labels = { queued: 'En attente', running: 'Blender travaille…', succeeded: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
 const errors = { timeout: 'Temps de rendu dépassé', worker_lost: 'Worker interrompu. Tu peux relancer le rendu.', blender_failed: 'Blender a échoué', worker_error: 'Worker indisponible', disk_full: 'Stockage plein', invalid_artifact: 'Fichiers incomplets', log_limit: 'Rendu interrompu' };
-const state = { project: null, jobs: [], proposals: [], viewer: null, viewerFailed: false, busy: false, authenticated: false, agentMode: 'rules', epoch: 0, shown: null, artifact: null };
+const state = { project: null, jobs: [], proposals: [], versions: [], selectedId: null, review: null, editable: true, viewer: null, viewerFailed: false, busy: false, authenticated: false, agentMode: 'rules', epoch: 0, shown: null, artifact: null };
 function cacheGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
 function cacheSet(key, value) { try { value == null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch { /* Private browser: server persistence still works. */ } }
 function message(text = '') { $('feedback').textContent = text; }
@@ -11,7 +11,7 @@ function pendingAction() {
     const pending = JSON.parse(cacheGet('bca.pending'));
     if (!pending) return null;
     if (typeof pending.body !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(pending.key) ||
-        !/^\/v1\/projects(?:\/import|\/[a-f0-9]{32}\/(?:chat|jobs|proposals\/[a-f0-9]{32}\/confirm))?$/.test(pending.path)) throw Error();
+        !/^\/v1\/projects(?:\/import|\/[a-f0-9]{32}\/(?:chat|jobs|restore|proposals\/[a-f0-9]{32}\/confirm))?$/.test(pending.path)) throw Error();
     JSON.parse(pending.body);
     return pending;
   } catch { cacheSet('bca.pending', null); return null; }
@@ -79,6 +79,38 @@ async function locked(task) {
   } finally {
     state.busy = false;
     for (const node of document.querySelectorAll('button,select,input,textarea')) node.disabled = false;
+    syncViewControls();
+  }
+}
+function syncViewControls() {
+  for (const node of document.querySelectorAll('#selected-object,#message,#send,#render,#project-name,#name-form button,[data-prompt]')) node.disabled = state.busy || !state.editable;
+  $('return-current').hidden = state.editable;
+}
+function renderSelection() {
+  $('selected-object').value = state.selectedId || '';
+  const object = state.project?.scene.objects.find((obj) => obj.id === state.selectedId);
+  $('selection-info').textContent = !state.editable ? 'Aperçu en lecture seule · Reviens au projet actuel pour le modifier.'
+    : object ? `Cible : ${object.name} · ${object.id.slice(0, 6)} · [${object.position.join(', ')}]. Touche un objet dans la 3D ou choisis-le ici.`
+      : 'Cible automatique : dernier objet correspondant. Touche un objet dans la 3D pour le choisir.';
+  state.viewer?.select(state.editable ? state.selectedId : null);
+}
+function selectObject(id) {
+  if (!state.editable || state.busy) return;
+  state.selectedId = state.project.scene.objects.some((obj) => obj.id === id) ? id : null;
+  cacheSet('bca.selection', JSON.stringify({ project: state.project.id, id: state.selectedId }));
+  renderSelection();
+}
+function setView(editable) {
+  state.editable = editable; state.review = null;
+  $('version-review').hidden = true;
+  syncViewControls(); renderSelection();
+}
+function renderVersions() {
+  $('versions').replaceChildren();
+  const reasons = { created: 'Création', edited: 'Modification', confirmed: 'Conversation confirmée', restored: 'Restauration', migration: 'Reprise du projet existant' };
+  for (const version of state.versions) {
+    const option = element('option', `Version ${version.revision} · ${reasons[version.reason]} · ${version.object_count} objet(s)`);
+    option.value = version.revision; $('versions').append(option);
   }
 }
 async function ensureViewer() {
@@ -92,7 +124,8 @@ async function ensureViewer() {
       $('reset-view').hidden = true; $('retry-view').hidden = false;
       if (state.artifact) { $('preview').hidden = false; $('hint').textContent = 'Aperçu image · La 3D peut être réactivée.'; }
       else $('hint').textContent = '3D indisponible sur ce navigateur. Les rendus restent accessibles.';
-    });
+    }, selectObject);
+    state.viewer.select(state.editable ? state.selectedId : null);
     $('reset-view').hidden = false; $('retry-view').hidden = true;
     return state.viewer;
   } catch {
@@ -101,7 +134,8 @@ async function ensureViewer() {
     return null;
   }
 }
-async function showSpec(spec, label) {
+async function showSpec(spec, label, editable = false) {
+  setView(editable);
   state.artifact = null; state.shown = label;
   $('scene-label').textContent = label;
   $('preview').hidden = true; $('downloads').hidden = true;
@@ -110,6 +144,7 @@ async function showSpec(spec, label) {
   else $('hint').textContent = '3D indisponible · Lance un rendu pour obtenir une image.';
 }
 async function showJob(job) {
+  setView(job.revision === state.project.revision);
   const epoch = state.epoch;
   state.artifact = job; state.shown = job.id;
   $('scene-label').textContent = `Rendu · version ${job.revision}`;
@@ -179,16 +214,25 @@ async function loadProjects() {
 async function openProject(id) {
   const epoch = ++state.epoch;
   state.shown = null; state.artifact = null;
-  const [project, jobs, proposals] = await Promise.all([request(`/v1/projects/${id}`), request(`/v1/projects/${id}/jobs`), request(`/v1/projects/${id}/chat`)]);
+  const [project, jobs, proposals, versions] = await Promise.all([request(`/v1/projects/${id}`), request(`/v1/projects/${id}/jobs`), request(`/v1/projects/${id}/chat`), request(`/v1/projects/${id}/versions`)]);
   if (epoch !== state.epoch) return;
-  Object.assign(state, { project, jobs, proposals }); cacheSet('bca.project', id);
+  Object.assign(state, { project, jobs, proposals, versions }); cacheSet('bca.project', id);
+  let selection;
+  try { selection = JSON.parse(cacheGet('bca.selection')); } catch { selection = null; }
+  state.selectedId = selection?.project === id && project.scene.objects.some((obj) => obj.id === selection.id) ? selection.id : null;
+  $('selected-object').replaceChildren(element('option', 'Automatique · dernier objet correspondant'));
+  $('selected-object').firstElementChild.value = '';
+  for (const object of project.scene.objects) {
+    const option = element('option', `${object.name} · ${object.id.slice(0, 6)} · [${object.position.join(', ')}]`);
+    option.value = object.id; $('selected-object').append(option);
+  }
   $('projects').value = id; $('project-workspace').hidden = false; $('empty-state').hidden = true;
   $('project-name').value = project.name;
   $('export-project').href = `/v1/projects/${id}/export`; $('export-project').hidden = false;
   $('scene-info').textContent = `Version ${project.revision} · ${project.scene.objects.length}/24 objets · Enregistrée sur le serveur`;
-  renderChat(); renderJobs();
+  renderChat(); renderJobs(); renderVersions();
   const latest = jobs.find((job) => job.status === 'succeeded' && job.revision === project.revision);
-  if (latest) await showJob(latest); else await showSpec(project.scene, `Projet · version ${project.revision}`);
+  if (latest) await showJob(latest); else await showSpec(project.scene, `Projet · version ${project.revision}`, true);
 }
 async function poll() {
   if (!state.authenticated || document.hidden || !state.project) return;
@@ -203,7 +247,7 @@ async function poll() {
   if (changed) {
     renderJobs();
     const latest = jobs.find((job) => job.status === 'succeeded' && job.revision === state.project.revision);
-    if (latest && state.shown !== latest.id) await showJob(latest);
+    if (state.editable && latest && state.shown !== latest.id) await showJob(latest);
   }
 }
 async function startWorkspace() {
@@ -238,11 +282,29 @@ $('import-project').addEventListener('change', () => locked(async () => {
   } finally { $('import-project').value = ''; }
 }));
 $('name-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const project = await request(`/v1/projects/${state.project.id}`, { method: 'PUT', body: JSON.stringify({ name: $('project-name').value, scene: state.project.scene, revision: state.project.revision }) }); await loadProjects(); await openProject(project.id); }); });
-$('chat-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const pid = state.project.id; await action(`/v1/projects/${pid}/chat`, { message: $('message').value }); $('message').value = ''; state.proposals = await request(`/v1/projects/${pid}/chat`); renderChat(); }); });
+$('chat-form').addEventListener('submit', (event) => { event.preventDefault(); if (!state.editable) return; locked(async () => { const pid = state.project.id; await action(`/v1/projects/${pid}/chat`, { message: $('message').value, revision: state.project.revision, object_id: state.selectedId }); $('message').value = ''; state.proposals = await request(`/v1/projects/${pid}/chat`); renderChat(); }); });
+$('selected-object').addEventListener('change', () => selectObject($('selected-object').value));
+$('versions').addEventListener('change', () => { state.review = null; $('version-review').hidden = true; });
+$('return-current').addEventListener('click', () => locked(() => openProject(state.project.id)));
+$('review-version').addEventListener('click', () => locked(async () => {
+  const version = await request(`/v1/projects/${state.project.id}/versions/${$('versions').value}`);
+  await showSpec(version.scene, `Historique · version ${version.revision}`);
+  state.review = { project: state.project.id, revision: state.project.revision, source_revision: version.revision };
+  $('version-description').textContent = `Version ${version.revision} · ${version.name} · ${version.object_count} objet(s). ${version.revision === state.project.revision ? 'C’est la version actuelle.' : `La restaurer créera la version ${state.project.revision + 1}, avec ce nom et cette scène. Aucun rendu ne sera lancé.`}`;
+  $('restore-version').hidden = version.revision === state.project.revision;
+  $('version-review').hidden = false;
+}));
+$('restore-version').addEventListener('click', () => locked(async () => {
+  const review = state.review;
+  if (!review || review.project !== state.project.id) return;
+  const project = await action(`/v1/projects/${review.project}/restore`, { revision: review.revision, source_revision: review.source_revision });
+  await loadProjects(); await openProject(project.id);
+  message(`Version ${project.revision} enregistrée. Aucun rendu lancé.`);
+}));
 for (const suggestion of document.querySelectorAll('[data-prompt]')) suggestion.addEventListener('click', () => { $('message').value = suggestion.dataset.prompt; $('message').focus(); });
 $('render').addEventListener('click', () => locked(async () => { await action(`/v1/projects/${state.project.id}/jobs`, { revision: state.project.revision }); await poll(); message('Rendu ajouté à la file.'); }));
 $('reset-view').addEventListener('click', () => state.viewer?.reset());
-$('retry-view').addEventListener('click', () => locked(async () => { const artifact = state.artifact; state.viewer?.dispose(); state.viewer = null; state.viewerFailed = false; if (artifact) await showJob(artifact); else await showSpec(state.project.scene, `Projet · version ${state.project.revision}`); }));
+$('retry-view').addEventListener('click', () => locked(async () => { const artifact = state.artifact; state.viewer?.dispose(); state.viewer = null; state.viewerFailed = false; if (artifact) await showJob(artifact); else await showSpec(state.project.scene, `Projet · version ${state.project.revision}`, true); }));
 let polling = false;
 async function refresh() { if (polling || state.busy) return; polling = true; try { await poll(); } catch { $('connection').textContent = 'Reconnexion…'; } finally { polling = false; } }
 setInterval(refresh, 3000);
