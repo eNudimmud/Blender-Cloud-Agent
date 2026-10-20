@@ -5,13 +5,25 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Blender Cloud Agent", version="0.1.0")
 ARTIFACT_ROOT = Path(os.environ.get("ARTIFACT_ROOT", "/tmp/blender-agent-artifacts")).resolve()
 BLENDER_BIN = os.environ.get("BLENDER_BIN", "blender")
 WORKER_SCRIPT = Path(__file__).resolve().parents[1] / "worker" / "generate.py"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/", include_in_schema=False)
+def mobile_home():
+    return FileResponse(STATIC_DIR / "index.html")
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
 
 class SceneRequest(BaseModel):
     shape: Literal["cube", "sphere", "cylinder"] = "cube"
