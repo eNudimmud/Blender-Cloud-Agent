@@ -1,22 +1,212 @@
-import * as THREE from "https://esm.sh/three@0.170.0";
-import { OrbitControls } from "https://esm.sh/three@0.170.0/examples/jsm/controls/OrbitControls.js";
-import { GLTFLoader } from "https://esm.sh/three@0.170.0/examples/jsm/loaders/GLTFLoader.js";
-const $=id=>document.getElementById(id);
-const container=$("canvas"),scene=new THREE.Scene();
-const camera=new THREE.PerspectiveCamera(45,1,.1,1000);
-camera.position.set(4,3,5);
-const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-container.appendChild(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xffffff,0x4d6588,2));
-const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(4,8,6);scene.add(key);
-const grid=new THREE.GridHelper(12,12,0x3d596b,0x263746);scene.add(grid);
-const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;
-let model=null;
-function resize(){const w=container.clientWidth,h=container.clientHeight;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)}
-new ResizeObserver(resize).observe(container);resize();
-function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)}animate();
-function display(url){new GLTFLoader().load(url,gltf=>{if(model)scene.remove(model);model=gltf.scene;scene.add(model);const box=new THREE.Box3().setFromObject(model);const center=box.getCenter(new THREE.Vector3()),radius=Math.max(box.getSize(new THREE.Vector3()).length(),1);controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(radius,radius*.7,radius));camera.lookAt(center);controls.update();$("hint").textContent="Drag to orbit · Pinch to zoom";},undefined,()=>{$("feedback").textContent="Scene generated, but GLB preview could not load."})}
-$("size").addEventListener("input",()=>{$("size-value").textContent=$("size").value});
-fetch("/health").then(r=>{if(!r.ok)throw Error();$("status").textContent="API online"}).catch(()=>$("status").textContent="API offline");
-$("scene-form").addEventListener("submit",async e=>{e.preventDefault();const button=$("generate");button.disabled=true;button.textContent="Generating…";$("feedback").textContent="Blender is building your scene. Please wait.";try{const r=await fetch("/v1/scenes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({shape:$("shape").value,size:Number($("size").value),name:$("name").value})});const data=await r.json();if(!r.ok)throw Error(data.detail||"Generation failed");for(const [id,key] of [["blend-link","scene.blend"],["glb-link","scene.glb"],["png-link","preview.png"]])$(id).href=data.files[key];$("downloads").hidden=false;display(data.files["scene.glb"]);$("feedback").textContent="Scene created. Download your files below."}catch(err){$("feedback").textContent=String(err.message||err)}finally{button.disabled=false;button.textContent="Generate scene"}});
+const $ = (id) => document.getElementById(id);
+const labels = { queued: 'En attente', running: 'Blender travaille…', succeeded: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
+const errors = { timeout: 'Temps de rendu dépassé', worker_lost: 'Worker interrompu. Tu peux relancer le rendu.', blender_failed: 'Blender a échoué', worker_error: 'Worker indisponible', disk_full: 'Stockage plein', invalid_artifact: 'Fichiers incomplets', log_limit: 'Rendu interrompu' };
+const state = { project: null, jobs: [], proposals: [], viewer: null, viewerFailed: false, busy: false, authenticated: false, epoch: 0, shown: null, artifact: null };
+function cacheGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
+function cacheSet(key, value) { try { value == null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch { /* Private browser: server persistence still works. */ } }
+function message(text = '') { $('feedback').textContent = text; }
+function element(tag, text, className) { const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node; }
+function loginScreen() {
+  state.authenticated = false;
+  state.epoch++;
+  state.viewer?.dispose(); state.viewer = null; state.shown = null;
+  $('workspace').hidden = true; $('login-panel').hidden = false;
+  $('connection').textContent = 'Atelier verrouillé';
+}
+async function request(path, options = {}) {
+  const response = await fetch(path, { credentials: 'same-origin', ...options,
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': '1', ...options.headers } });
+  if (response.status === 204) return null;
+  const data = await response.json();
+  if (!response.ok) {
+    if (response.status === 401 && path !== '/v1/auth/session') loginScreen();
+    const error = new Error(typeof data.detail === 'string' ? data.detail : 'Demande invalide. Vérifie les valeurs.');
+    error.status = response.status; throw error;
+  }
+  return data;
+}
+async function action(path, body = {}) {
+  const serialized = JSON.stringify(body);
+  let pending;
+  try { pending = JSON.parse(cacheGet('bca.pending')); } catch { cacheSet('bca.pending', null); }
+  if (pending && (pending.path !== path || pending.body !== serialized)) throw new Error('Une demande attend la connexion. Recharge la page pour la reprendre.');
+  pending ||= { path, body: serialized, key: crypto.randomUUID() };
+  cacheSet('bca.pending', JSON.stringify(pending));
+  try {
+    const result = await request(path, { method: 'POST', body: serialized, headers: { 'Idempotency-Key': pending.key } });
+    cacheSet('bca.pending', null); return result;
+  } catch (error) {
+    if (error.status && error.status < 500) cacheSet('bca.pending', null);
+    throw error;
+  }
+}
+async function locked(task) {
+  if (state.busy) return;
+  state.busy = true;
+  const inputs = [...$('workspace').querySelectorAll('button,select,input,textarea'), ...$('login-form').querySelectorAll('button,input')];
+  inputs.forEach((node) => node.disabled = true);
+  message();
+  try { await task(); } catch (error) {
+    message(error.status ? error.message : 'Connexion interrompue. Tes projets restent enregistrés ; recharge pour reprendre la demande.');
+    if (error.status === 409 && state.project) await openProject(state.project.id).catch(() => {});
+  } finally {
+    state.busy = false;
+    for (const node of document.querySelectorAll('button,select,input,textarea')) node.disabled = false;
+  }
+}
+async function ensureViewer() {
+  if (state.viewer) return state.viewer;
+  if (state.viewerFailed) return null;
+  try {
+    const { createViewer } = await import('/static/vendor/viewer.js');
+    state.viewer = createViewer($('canvas'), () => {
+      state.viewerFailed = true;
+      state.viewer?.dispose(); state.viewer = null;
+      $('reset-view').hidden = true; $('retry-view').hidden = false;
+      if (state.artifact) { $('preview').hidden = false; $('hint').textContent = 'Aperçu image · La 3D peut être réactivée.'; }
+      else $('hint').textContent = '3D indisponible sur ce navigateur. Les rendus restent accessibles.';
+    });
+    $('reset-view').hidden = false; $('retry-view').hidden = true;
+    return state.viewer;
+  } catch {
+    state.viewerFailed = true;
+    $('retry-view').hidden = false;
+    return null;
+  }
+}
+async function showSpec(spec, label) {
+  state.artifact = null; state.shown = label;
+  $('scene-label').textContent = label;
+  $('preview').hidden = true; $('downloads').hidden = true;
+  const viewer = await ensureViewer();
+  if (viewer) { viewer.showSpec(spec); $('hint').textContent = '1 doigt : tourner · 2 doigts : zoomer / déplacer'; }
+  else $('hint').textContent = '3D indisponible · Lance un rendu pour obtenir une image.';
+}
+async function showJob(job) {
+  const epoch = state.epoch;
+  state.artifact = job; state.shown = job.id;
+  $('scene-label').textContent = `Rendu · version ${job.revision}`;
+  $('preview').src = job.files['preview.png']; $('preview').hidden = false;
+  for (const [id, file] of [['glb-link', 'scene.glb'], ['blend-link', 'scene.blend'], ['png-link', 'preview.png']]) $(id).href = job.files[file];
+  $('downloads').hidden = false;
+  $('hint').textContent = 'Aperçu Blender';
+  const viewer = await ensureViewer();
+  if (viewer) {
+    try {
+      const loaded = await viewer.load(job.files['scene.glb']);
+      if (loaded && epoch === state.epoch && state.shown === job.id) { $('preview').hidden = true; $('hint').textContent = '1 doigt : tourner · 2 doigts : zoomer / déplacer'; }
+    } catch { if (epoch === state.epoch) $('hint').textContent = 'Aperçu image · Le modèle 3D reste téléchargeable.'; }
+  }
+}
+function renderChat() {
+  const nearBottom = $('conversation').scrollHeight - $('conversation').scrollTop - $('conversation').clientHeight < 80;
+  $('conversation').replaceChildren();
+  for (const proposal of state.proposals) {
+    const item = element('article', '', 'chat-item');
+    item.append(element('p', proposal.message, 'chat-user'), element('p', proposal.summary, 'chat-answer'));
+    if (proposal.supported) {
+      const details = element('details');
+      details.append(element('summary', `${proposal.scene.objects.length} objet(s) · Voir les valeurs proposées`));
+      for (const obj of proposal.scene.objects) details.append(element('p', `${obj.name} (${obj.id.slice(0, 6)}) · ${obj.shape} · taille ${obj.size} · ${obj.color} · [${obj.position.join(', ')}]`, 'chat-preview'));
+      item.append(details);
+      if (!proposal.job_id && proposal.base_revision === state.project.revision) {
+        const preview = element('button', 'Prévisualiser la proposition');
+        preview.type = 'button'; preview.addEventListener('click', () => locked(() => showSpec(proposal.scene, 'Proposition · à confirmer')));
+        const confirm = element('button', 'Confirmer et lancer le rendu');
+        confirm.type = 'button';
+        confirm.addEventListener('click', () => locked(async () => {
+          const pid = state.project.id;
+          await action(`/v1/projects/${pid}/proposals/${proposal.id}/confirm`);
+          await openProject(pid); message('Modification enregistrée. Le rendu est dans la file.');
+        }));
+        item.append(preview, confirm);
+      } else item.append(element('small', proposal.job_id ? 'Modification confirmée et enregistrée.' : 'Le projet a changé : prépare une nouvelle demande.', 'muted'));
+    }
+    $('conversation').append(item);
+  }
+  if (nearBottom) $('conversation').scrollTop = $('conversation').scrollHeight;
+}
+function renderJobs() {
+  $('jobs').replaceChildren();
+  for (const job of state.jobs) {
+    const row = element('div', '', 'job'); const text = element('div', `Version ${job.revision} · ${labels[job.status]}`);
+    if (job.error_code) text.append(element('small', errors[job.error_code] || 'Rendu interrompu. Tu peux réessayer.'));
+    row.append(text);
+    if (job.status === 'succeeded') {
+      const view = element('button', 'Ouvrir', 'secondary'); view.addEventListener('click', () => locked(() => showJob(job))); row.append(view);
+    } else if (['queued', 'running'].includes(job.status)) {
+      const cancel = element('button', 'Annuler', 'secondary'); cancel.addEventListener('click', () => locked(async () => { await request(`/v1/jobs/${job.id}/cancel`, { method: 'POST', body: '{}' }); await poll(); })); row.append(cancel);
+    }
+    $('jobs').append(row);
+  }
+}
+async function loadProjects() {
+  const projects = await request('/v1/projects');
+  $('projects').replaceChildren(element('option', 'Choisir un projet'));
+  $('projects').firstElementChild.value = '';
+  for (const project of projects) { const option = element('option', project.name); option.value = project.id; $('projects').append(option); }
+  $('projects').value = state.project?.id || '';
+  $('empty-state').hidden = projects.length > 0;
+  return projects;
+}
+async function openProject(id) {
+  const epoch = ++state.epoch;
+  state.shown = null; state.artifact = null;
+  const [project, jobs, proposals] = await Promise.all([request(`/v1/projects/${id}`), request(`/v1/projects/${id}/jobs`), request(`/v1/projects/${id}/chat`)]);
+  if (epoch !== state.epoch) return;
+  Object.assign(state, { project, jobs, proposals }); cacheSet('bca.project', id);
+  $('projects').value = id; $('project-workspace').hidden = false; $('empty-state').hidden = true;
+  $('project-name').value = project.name;
+  $('scene-info').textContent = `Version ${project.revision} · ${project.scene.objects.length}/24 objets · Enregistrée sur le serveur`;
+  renderChat(); renderJobs();
+  const latest = jobs.find((job) => job.status === 'succeeded' && job.revision === project.revision);
+  if (latest) await showJob(latest); else await showSpec(project.scene, `Projet · version ${project.revision}`);
+}
+async function poll() {
+  if (!state.authenticated || document.hidden || !state.project) return;
+  const epoch = state.epoch;
+  const [jobs, capabilities, current] = await Promise.all([request(`/v1/projects/${state.project.id}/jobs`), request('/v1/capabilities'), request(`/v1/projects/${state.project.id}`)]);
+  if (epoch !== state.epoch) return;
+  if (current.revision !== state.project.revision) { await openProject(current.id); return; }
+  $('connection').textContent = 'Atelier connecté';
+  $('worker-status').textContent = capabilities.workers_online ? 'Moteur Blender disponible' : 'Moteur hors ligne · Les demandes attendent dans la file';
+  const changed = JSON.stringify(jobs.map((job) => [job.id, job.status])) !== JSON.stringify(state.jobs.map((job) => [job.id, job.status]));
+  state.jobs = jobs;
+  if (changed) {
+    renderJobs();
+    const latest = jobs.find((job) => job.status === 'succeeded' && job.revision === state.project.revision);
+    if (latest && state.shown !== latest.id) await showJob(latest);
+  }
+}
+async function startWorkspace() {
+  state.authenticated = true; $('login-panel').hidden = true; $('workspace').hidden = false;
+  $('connection').textContent = 'Atelier connecté';
+  const pendingText = cacheGet('bca.pending');
+  if (pendingText) {
+    try { const pending = JSON.parse(pendingText); await action(pending.path, JSON.parse(pending.body)); message('Dernière demande reprise.'); }
+    catch (error) { message(error.message); }
+  }
+  const projects = await loadProjects();
+  const selected = projects.find((project) => project.id === cacheGet('bca.project')) || projects[0];
+  if (selected) await openProject(selected.id);
+  const capabilities = await request('/v1/capabilities');
+  $('agent-label').textContent = capabilities.agent_mode === 'llm' ? 'Planificateur IA' : 'Assistant guidé';
+  if (capabilities.agent_mode === 'llm') $('agent-description').textContent = capabilities.paid_ai_enabled ? 'IA externe activée par l’administrateur · Confirmation avant chaque rendu.' : 'IA externe désactivée. Aucun appel payant autorisé.';
+  await poll();
+}
+$('login-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { await request('/v1/auth/session', { method: 'POST', body: JSON.stringify({ token: $('token').value }) }); $('token').value = ''; await startWorkspace(); }); });
+$('logout').addEventListener('click', () => locked(async () => { await request('/v1/auth/session', { method: 'DELETE' }); cacheSet('bca.project', null); cacheSet('bca.pending', null); loginScreen(); }));
+$('projects').addEventListener('change', () => { if ($('projects').value) locked(() => openProject($('projects').value)); });
+$('new-project').addEventListener('click', () => locked(async () => { const project = await action('/v1/projects', { name: 'Nouveau projet' }); await loadProjects(); await openProject(project.id); }));
+$('name-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const project = await request(`/v1/projects/${state.project.id}`, { method: 'PUT', body: JSON.stringify({ name: $('project-name').value, scene: state.project.scene, revision: state.project.revision }) }); await loadProjects(); await openProject(project.id); }); });
+$('chat-form').addEventListener('submit', (event) => { event.preventDefault(); locked(async () => { const pid = state.project.id; await action(`/v1/projects/${pid}/chat`, { message: $('message').value }); $('message').value = ''; state.proposals = await request(`/v1/projects/${pid}/chat`); renderChat(); }); });
+for (const suggestion of document.querySelectorAll('[data-prompt]')) suggestion.addEventListener('click', () => { $('message').value = suggestion.dataset.prompt; $('message').focus(); });
+$('render').addEventListener('click', () => locked(async () => { await action(`/v1/projects/${state.project.id}/jobs`, { revision: state.project.revision }); await poll(); message('Rendu ajouté à la file.'); }));
+$('reset-view').addEventListener('click', () => state.viewer?.reset());
+$('retry-view').addEventListener('click', () => locked(async () => { const artifact = state.artifact; state.viewer?.dispose(); state.viewer = null; state.viewerFailed = false; if (artifact) await showJob(artifact); else await showSpec(state.project.scene, `Projet · version ${state.project.revision}`); }));
+let polling = false;
+async function refresh() { if (polling || state.busy) return; polling = true; try { await poll(); } catch { $('connection').textContent = 'Reconnexion…'; } finally { polling = false; } }
+setInterval(refresh, 3000);
+document.addEventListener('visibilitychange', refresh);
+window.addEventListener('online', refresh);
+request('/v1/auth/session').then((session) => session.authenticated ? locked(startWorkspace) : loginScreen()).catch(() => { loginScreen(); message('Serveur inaccessible. Réessaie après avoir retrouvé une connexion.'); });

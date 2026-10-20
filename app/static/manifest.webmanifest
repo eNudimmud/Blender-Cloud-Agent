@@ -1,1 +1,1 @@
-{"name":"Blender Cloud Agent","short_name":"Blender Agent","start_url":"/","display":"standalone","background_color":"#0c1119","theme_color":"#10151e","description":"Mobile-first Blender cloud scene generation prototype"}
+{"name":"Blender Cloud Agent","short_name":"Blender Cloud","lang":"fr","start_url":"/","display":"standalone","background_color":"#0c1117","theme_color":"#10151e","description":"Ton atelier 3D mobile. Blender travaille sur le serveur.","icons":[{"src":"/static/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}

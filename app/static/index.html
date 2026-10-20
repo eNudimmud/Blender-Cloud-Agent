@@ -1,3 +1,48 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#10151e"><link rel="manifest" href="/manifest.webmanifest"><title>Blender Cloud Agent</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main class="shell"><header><div><strong>◈ BLENDER CLOUD</strong><small>Mobile 3D workspace · Technical alpha</small></div><span class="status" id="status">Checking API</span></header><section class="viewer"><div id="canvas" aria-label="3D model viewer"></div><div class="overlay" id="hint">Create a scene to start</div></section><section class="controls"><h1>Create a scene</h1><form id="scene-form"><label for="shape">Object</label><select id="shape"><option value="cube">Cube</option><option value="sphere">Sphere</option><option value="cylinder">Cylinder</option></select><label for="size">Size <output id="size-value">2</output></label><input id="size" type="range" min=".5" max="8" step=".5" value="2"><label for="name">Project name</label><input id="name" maxlength="80" value="My First Scene"><button type="submit" id="generate">Generate scene</button></form><p class="feedback" id="feedback" role="status" aria-live="polite">No GPU or LLM required for this demo.</p><nav id="downloads" hidden><a id="blend-link" download>Download .blend</a><a id="glb-link" download>Download .glb</a><a id="png-link" download>Preview PNG</a></nav></section><footer>Prototype · One scene at a time · Not for public deployment</footer></main><script type="module" src="/static/app.js"></script></body></html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#10151e">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <title>Blender Cloud Agent</title>
+</head>
+<body>
+  <main class="shell">
+    <header><a class="brand" href="/">◈ <span>BLENDER CLOUD<small>Ton atelier 3D, dans la poche.</small></span></a><span id="connection" class="badge">Connexion…</span></header>
+    <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+    <section id="login-panel" class="panel narrow" hidden>
+      <p class="eyebrow">ESPACE PERSONNEL</p><h1>Ouvre ton atelier.</h1>
+      <p>Crée et retrouve tes scènes sur ton téléphone. Blender travaille sur le serveur.</p>
+      <form id="login-form"><label for="token">Clé d’accès à l’atelier</label><input id="token" type="password" autocomplete="current-password" maxlength="256" required><button type="submit">Se connecter</button></form>
+    </section>
+    <div id="workspace" hidden>
+      <section class="project-bar" aria-label="Projets"><div class="grow"><label for="projects">MES PROJETS</label><select id="projects"><option value="">Choisir un projet</option></select></div><button id="new-project" class="secondary">+ Nouveau</button></section>
+      <div id="empty-state" class="panel narrow" hidden><h1>Une idée, puis une scène.</h1><p>Crée ton premier projet pour commencer. Il sera enregistré dans ton atelier.</p></div>
+      <div id="project-workspace" hidden>
+        <section class="viewer" aria-label="Aperçu de la scène">
+          <div id="canvas" aria-label="Visualiseur 3D tactile"></div>
+          <img id="preview" alt="Rendu Blender de la version sélectionnée" hidden>
+          <div class="viewer-top"><span id="scene-label" class="badge">Scène vide</span><button id="reset-view" class="glass" type="button" hidden>Recentrer</button></div>
+          <div id="hint" class="overlay">Ajoute ton premier objet.</div>
+        </section>
+        <div class="viewer-tools"><span id="worker-status">Vérification du moteur…</span><button id="retry-view" class="text-button" hidden>Réessayer la 3D</button></div>
+        <nav id="downloads" class="downloads" aria-label="Téléchargements" hidden><a id="glb-link" download="scene.glb">Modèle .glb ↗</a><a id="blend-link" download="scene.blend">Projet .blend ↗</a><a id="png-link" download="preview.png">Image PNG ↗</a></nav>
+        <div class="columns">
+          <section class="panel assistant"><div class="section-heading"><div><p class="eyebrow">DE L’IDÉE À L’OBJET</p><h1>Parlons de ta scène.</h1></div><span id="agent-label" class="badge">Assistant guidé</span></div>
+            <p class="muted" id="agent-description">Cubes, sphères, cylindres · Une action par message · Confirmation avant rendu.</p>
+            <div id="conversation" class="conversation" aria-label="Conversation"></div>
+            <div class="suggestions" aria-label="Exemples"><button type="button" data-prompt="Ajoute un cube rouge de taille 2">Un cube rouge</button><button type="button" data-prompt="Ajoute une sphère bleue x=3">Une sphère bleue</button><button type="button" data-prompt="Change sa couleur en vert">Le passer en vert</button></div>
+            <form id="chat-form"><label class="sr-only" for="message">Ta demande</label><textarea id="message" rows="2" maxlength="2000" placeholder="Ajoute un cylindre orange de taille 3…" required></textarea><button type="submit" id="send">Préparer la modification <span aria-hidden="true">↗</span></button></form>
+          </section>
+          <section class="panel"><p class="eyebrow">ENREGISTRÉ DANS TON ATELIER</p><h2>Projet & versions</h2><form id="name-form" class="inline"><div class="grow"><label for="project-name">Nom du projet</label><input id="project-name" maxlength="80" required></div><button type="submit" class="secondary">Renommer</button></form><p id="scene-info" class="muted"></p><button id="render" class="secondary full">Lancer un rendu de cette version</button><div id="jobs" class="jobs" aria-label="Historique des rendus"></div></section>
+        </div>
+      </div>
+      <footer><span>Blender sur serveur · Sans installation sur Android</span><button id="logout" class="text-button">Déconnexion</button></footer>
+    </div>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

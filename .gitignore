@@ -4,3 +4,10 @@ __pycache__/
 .env
 artifacts/
 *.blend1
+node_modules/
+data/
+app/static/vendor/
+test-results/
+playwright-report/
+.ruff_cache/
+*.sqlite3*

@@ -1,14 +1,76 @@
-name: API checks
+name: MVP validation
 on:
   push:
   pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mvp-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt pytest httpx
-      - run: pytest -q
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: python -m pip install -r requirements-dev.txt
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: ruff check app worker tests scripts
+      - run: pip-audit -r requirements.txt --no-deps --disable-pip
+      - run: npm audit --omit=dev
+      - run: node --check app/static/app.js
+      - name: Install checksum-pinned Blender for real tests
+        run: bash scripts/install_blender.sh "$RUNNER_TEMP/blender"
+      - name: API, persistence, queue, planner, and real Blender tests
+        env:
+          BLENDER_BIN: ${{ runner.temp }}/blender/blender-4.5.3-linux-x64/blender
+        run: python -m pytest -q --junitxml=test-results/python.xml
+      - run: npx playwright install --with-deps chromium
+      - name: Android emulation and desktop browser tests
+        env:
+          PYTHON_BIN: python
+          BLENDER_BIN: ${{ runner.temp }}/blender/blender-4.5.3-linux-x64/blender
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-reports
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+  containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      API_TOKEN: ci-test-key-only-never-production-123456789
+      COOKIE_SECURE: "false"
+      ALLOW_PAID_AI: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: docker compose config --quiet
+      - run: docker compose build
+      - run: docker compose up -d --wait --wait-timeout 120
+      - name: Verify sandbox properties, real rendering and durable restart
+        run: python scripts/compose_smoke.py
+      - name: Container diagnostics
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Clean up test containers and volume
+        if: always()
+        run: docker compose down -v

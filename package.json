@@ -1,0 +1,12 @@
+{
+  "name":"blender-cloud-agent-ui",
+  "version":"0.2.0",
+  "private":true,
+  "type":"module",
+  "scripts":{
+    "build":"esbuild frontend/viewer.js --bundle --format=esm --minify --outfile=app/static/vendor/viewer.js",
+    "test:e2e":"playwright test"
+  },
+  "dependencies":{"three":"0.170.0"},
+  "devDependencies":{"@playwright/test":"1.56.1","esbuild":"0.25.11"}
+}
