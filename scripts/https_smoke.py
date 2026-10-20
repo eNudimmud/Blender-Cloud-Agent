@@ -51,6 +51,7 @@ with httpx.Client(base_url='https://localhost', verify=context, follow_redirects
     response = client.get('/v1/projects')
     assert response.status_code == 401 and response.headers['cache-control'] == 'no-store'
     assert response.headers['strict-transport-security'] == 'max-age=31536000'
+    assert 'alt-svc' not in response.headers  # This overlay publishes TCP, not HTTP/3 UDP.
     response = client.post('/v1/auth/session', headers={'Origin': 'https://localhost', 'X-CSRF-Token': '1',
                            'X-BCA-Client-IP': '203.0.113.9', 'X-BCA-Proxy-Key': 'spoofed'},
                            json={'token': os.environ['API_TOKEN']})

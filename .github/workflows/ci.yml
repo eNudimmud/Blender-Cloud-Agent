@@ -41,7 +41,10 @@ jobs:
         env:
           PYTHON_BIN: python
           BLENDER_BIN: ${{ runner.temp }}/blender/blender-4.5.3-linux-x64/blender
-        run: npm run test:e2e
+        run: |
+          for profile in android-chromium desktop-chromium; do
+            BCA_E2E_OUTPUT="test-results/$profile" BCA_E2E_REPORT="playwright-report/$profile" npm run test:e2e -- --project="$profile"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -95,7 +98,13 @@ jobs:
           BCA_E2E_BASE_URL: https://localhost
           BCA_E2E_TOKEN: ci-test-key-only-never-production-123456789
           BCA_E2E_REAL_WORKER: "true"
-        run: npm run test:e2e
+          COMPOSE_FILE: compose.yml:compose.https.yml:deploy/compose.test.yml
+        run: |
+          for profile in android-chromium desktop-chromium; do
+            # Separate suite fixtures without changing production rate limits.
+            docker compose exec -T api python -c 'import os,sqlite3; assert os.environ["API_TOKEN"] == "ci-test-key-only-never-production-123456789"; c=sqlite3.connect("/data/agent.sqlite3"); c.execute("DELETE FROM rates"); c.commit()'
+            BCA_E2E_OUTPUT="test-results/$profile" BCA_E2E_REPORT="playwright-report/$profile" npm run test:e2e -- --project="$profile"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

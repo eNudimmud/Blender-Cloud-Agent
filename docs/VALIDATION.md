@@ -43,3 +43,5 @@ The HTTPS overlay and CI smoke checks are included; use the current PR/run outco
 ## Still pending
 
 Physical Android and foldable-device acceptance; public HTTPS hosting and a publicly trusted certificate; real external LLM quality/billing tests (requires explicit authorization); native U*TTU import/mapping; an MCP adapter; arbitrary assets, richer scene operations, animation, GPU rendering, multiple owners and stronger per-job/per-tenant isolation. A PWA manifest is supplied, but offline service-worker operation and installation prompts have not been validated.
+
+Browser profiles use separate ephemeral API lifecycles for direct-HTTP tests. In the shared HTTPS CI stack, only the test workspace's rate counters are reset between profiles, guarded by the known CI-only access key. This prevents the automated suites from consuming each other's per-workspace quota; production limits remain unchanged and are tested in the API suite. File-picker tests wait for the input to become enabled after startup/reload, matching an actual user interaction.

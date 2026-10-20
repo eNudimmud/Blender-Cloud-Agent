@@ -35,7 +35,7 @@ Caddy listens internally on unprivileged ports 8080/8443, mapped externally to 8
 
 The proxy replaces incoming client-IP/proxy-auth headers with its own values. The API accepts that client address only when the proxy authenticates it with the shared secret; arbitrary `X-Forwarded-For` is ignored. This preserves per-address login limits without trusting browser-supplied IPs. Uvicorn proxy-header inference stays disabled. Origin checks use the exact configured HTTPS origin.
 
-HSTS is enabled for this hostname only. No wildcard/subdomain policy is imposed. This does not supply a WAF, organizational login, DDoS service or per-tenant sandbox.
+HTTP/1.1 and HTTP/2 are enabled. HTTP/3 advertisement is disabled because this overlay publishes TCP only, so clients are not directed to an unpublished UDP service. HSTS is enabled for this hostname only. No wildcard/subdomain policy is imposed. This does not supply a WAF, organizational login, DDoS service or per-tenant sandbox.
 
 ## Stop, update and recover
 

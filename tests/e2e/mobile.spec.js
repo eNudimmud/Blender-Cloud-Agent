@@ -11,12 +11,14 @@ async function signIn(page, ui = false) {
     await page.context().addCookies([{ name: 'bca_session', value, url: BASE_URL, secure: BASE_URL.startsWith('https:'), httpOnly: true, sameSite: 'Strict' }]);
     await page.goto('/');
     await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.getByRole('button', {name: '+ Nouveau', exact: true})).toBeEnabled();
     return;
   }
   await page.goto('/');
   await page.getByLabel('Clé d’accès à l’atelier').fill(TOKEN);
   await page.getByRole('button', { name: 'Se connecter', exact: true }).click();
   await expect(page.locator('#workspace')).toBeVisible();
+  await expect(page.getByRole('button', {name: '+ Nouveau', exact: true})).toBeEnabled();
 }
 async function newProject(page) {
   await page.getByRole('button', { name: '+ Nouveau', exact: true }).click();
@@ -100,6 +102,7 @@ test('network loss preserves a pending creation and resumes once', async ({ page
   await context.setOffline(false);
   await page.reload();
   await expect(page.locator('#project-workspace')).toBeVisible();
+  await expect(page.getByRole('button', {name: '+ Nouveau', exact: true})).toBeEnabled();
   const response = await page.request.get('/v1/projects');
   expect((await response.json()).length).toBe(count + 1);
   expect(await page.evaluate(() => sessionStorage.getItem('bca.pending'))).toBeNull();
@@ -144,6 +147,7 @@ test('Android project download imports as a separate copy with the same scene', 
   const buffer = await readFile(await download.path());
   const portable = JSON.parse(buffer.toString('utf8'));
   expect(portable.project.scene.objects[0].color).toBe('#5d9ddd');
+  await expect(page.locator('#import-project')).toBeEnabled();
   await page.locator('#import-project').setInputFiles({name: download.suggestedFilename(), mimeType: 'application/json', buffer});
   await expect(page.locator('#feedback')).toContainText('Projet importé dans une nouvelle copie');
   const copiedId = await page.evaluate(() => sessionStorage.getItem('bca.project'));

@@ -5,7 +5,8 @@ export default defineConfig({
   expect: { timeout: 15000 },
   workers: 1,
   fullyParallel: false,
-  reporter: [['list'], ['html', { open: 'never' }]],
+  outputDir: process.env.BCA_E2E_OUTPUT || 'test-results',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: process.env.BCA_E2E_REPORT || 'playwright-report' }]],
   use: {
     baseURL: process.env.BCA_E2E_BASE_URL || 'http://127.0.0.1:8765',
     ignoreHTTPSErrors: Boolean(process.env.BCA_E2E_BASE_URL),
