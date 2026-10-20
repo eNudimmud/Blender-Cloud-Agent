@@ -1,0 +1,14 @@
+.git
+.venv
+node_modules
+data
+artifacts
+test-results
+playwright-report
+__pycache__
+.pytest_cache
+.ruff_cache
+.env
+.env.*
+!.env.example
+app/static/vendor

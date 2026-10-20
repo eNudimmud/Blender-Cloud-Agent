@@ -1,0 +1,5 @@
+# CI only. No public certificate request or paid hosting is created.
+services:
+  proxy:
+    volumes:
+      - ./deploy/tls.internal.caddy:/etc/caddy/tls.caddy:ro

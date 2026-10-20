@@ -1,0 +1,2 @@
+# CI-only local authority. Not an Android production certificate.
+tls internal

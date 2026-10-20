@@ -1,0 +1,6 @@
+FROM caddy:2.11.7-alpine
+# The upstream binary has cap_net_bind_service; exec fails with cap_drop=ALL.
+# We only bind unprivileged internal ports, so remove rather than grant it.
+RUN setcap -r /usr/bin/caddy && test -z "$(getcap /usr/bin/caddy)" \
+    && mkdir -p /data /config && chown -R 10001:10001 /data /config
+USER 10001:10001
