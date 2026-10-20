@@ -31,6 +31,8 @@
           <div id="hint" class="overlay">Ajoute ton premier objet.</div>
         </section>
         <div class="viewer-tools"><span id="worker-status">Vérification du moteur…</span><button id="retry-view" class="text-button" hidden>Réessayer la 3D</button></div>
+        <div class="object-tools"><div class="grow"><label for="selected-object">Objet à modifier</label><select id="selected-object"><option value="">Automatique · dernier objet correspondant</option></select></div><button id="return-current" class="secondary" hidden>Revenir au projet actuel</button></div>
+        <p id="selection-info" class="muted" aria-live="polite"></p>
         <nav id="downloads" class="downloads" aria-label="Téléchargements" hidden><a id="glb-link" download="scene.glb">Modèle .glb ↗</a><a id="blend-link" download="scene.blend">Projet .blend ↗</a><a id="png-link" download="preview.png">Image PNG ↗</a></nav>
         <div class="columns">
           <section class="panel assistant"><div class="section-heading"><div><p class="eyebrow">DE L’IDÉE À L’OBJET</p><h1>Parlons de ta scène.</h1></div><span id="agent-label" class="badge">Assistant guidé</span></div>
@@ -39,7 +41,9 @@
             <div class="suggestions" aria-label="Exemples"><button type="button" data-prompt="Ajoute un cube rouge de taille 2">Un cube rouge</button><button type="button" data-prompt="Ajoute une sphère bleue x=3">Une sphère bleue</button><button type="button" data-prompt="Change sa couleur en vert">Le passer en vert</button></div>
             <form id="chat-form"><label class="sr-only" for="message">Ta demande</label><textarea id="message" rows="2" maxlength="2000" placeholder="Ajoute un cylindre orange de taille 3…" required></textarea><button type="submit" id="send">Préparer la modification <span aria-hidden="true">↗</span></button></form>
           </section>
-          <section class="panel"><p class="eyebrow">ENREGISTRÉ DANS TON ATELIER</p><h2>Projet & versions</h2><form id="name-form" class="inline"><div class="grow"><label for="project-name">Nom du projet</label><input id="project-name" maxlength="80" required></div><button type="submit" class="secondary">Renommer</button></form><p id="scene-info" class="muted"></p><button id="render" class="secondary full">Lancer un rendu de cette version</button><div id="jobs" class="jobs" aria-label="Historique des rendus"></div></section>
+          <section class="panel"><p class="eyebrow">ENREGISTRÉ DANS TON ATELIER</p><h2>Projet & versions</h2><form id="name-form" class="inline"><div class="grow"><label for="project-name">Nom du projet</label><input id="project-name" maxlength="80" required></div><button type="submit" class="secondary">Renommer</button></form><p id="scene-info" class="muted"></p><button id="render" class="secondary full">Lancer un rendu de cette version</button>
+            <details class="history"><summary>Historique du projet</summary><p class="muted">Les 100 dernières versions sont conservées. Restaurer crée une nouvelle version, sans rendu.</p><label for="versions">Version enregistrée</label><select id="versions"></select><button id="review-version" class="secondary full" type="button">Examiner cette version</button><div id="version-review" hidden><p id="version-description" class="muted"></p><button id="restore-version" class="secondary full" type="button">Confirmer la restauration</button></div></details>
+            <div id="jobs" class="jobs" aria-label="Historique des rendus"></div></section>
         </div>
       </div>
       <footer><span>Blender sur serveur · Sans installation sur Android</span><button id="logout" class="text-button">Déconnexion</button></footer>

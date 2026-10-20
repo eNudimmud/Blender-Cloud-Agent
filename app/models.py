@@ -60,6 +60,33 @@ class RenderRequest(StrictModel):
 
 class ChatRequest(StrictModel):
     message: str = Field(min_length=1, max_length=2000)
+    revision: int | None = Field(default=None, ge=1)
+    object_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+    @model_validator(mode="after")
+    def selection_requires_revision(self):
+        if self.object_id and self.revision is None:
+            raise ValueError("An object selection requires the displayed project revision")
+        return self
+
+
+class RestoreRequest(StrictModel):
+    revision: int = Field(ge=1)
+    source_revision: int = Field(ge=1)
+
+
+class VersionSummary(StrictModel):
+    project_id: str
+    revision: int
+    name: str
+    object_count: int
+    saved_at: float
+    reason: Literal["created", "edited", "confirmed", "restored", "migration"]
+    restored_from: int | None
+
+
+class VersionView(VersionSummary):
+    scene: SceneSpec
 
 
 class Login(StrictModel):

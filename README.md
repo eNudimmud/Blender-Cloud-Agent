@@ -10,6 +10,8 @@ The MVP supports bounded primitive scenes, persistent projects, conversational p
 
 - Save and rename projects; keep scene revisions, render snapshots, job status and conversation in SQLite on a persistent volume.
 - Add cubes, spheres and cylinders; change color/size/position or remove an object through the guided FR/EN assistant. Review actual proposed values, preview locally in 3D, then confirm to save and render.
+- Tap an object in the live 3D view or select its name/ID in the list to target it explicitly, including when two objects have the same shape. Selection survives reload and works in exported GLB models; the list remains available with the PNG fallback.
+- Examine the last 100 saved project versions and explicitly restore the saved name/scene into a new revision, without launching Blender. Historical/proposed previews are read-only until returning to the current project. See [mobile editing and version recovery](docs/MOBILE_EDITING.md).
 - Orbit with one finger, pinch to zoom, and pan with two fingers. Three.js is bundled and served by the API; no CDN requests at runtime. Show the real PNG and download links when WebGL is unavailable.
 - Queue jobs without blocking the API. Claim jobs transactionally, cancel queued/running work, enforce deadlines, fence obsolete workers and publish only complete artifacts with SHA-256 manifests.
 - Export a portable `.bca.json` on Android and import it into a new copy; importing never overwrites the original or launches a render.
@@ -19,9 +21,9 @@ The MVP supports bounded primitive scenes, persistent projects, conversational p
 
 ## Validation
 
-On 2026-10-20: **88 Python tests passed**, including five executions of real Blender 4.5.3 LTS (cube, sphere, cylinder, combined scene and empty scene). **17 browser tests passed**, with 1 intentional skip for a touch-only test in the desktop profile. Android is Chromium/Pixel 7 emulation, including real touch-event orbit/pinch, not a physical-device certification. Narrow 320 px layout, foldable viewport changes, lost-response recovery, portable project export/import, restart persistence, artifact access and the PNG fallback are covered.
+On 2026-10-20, the selection/history follow-up passed **107 local Python tests**, including five executions of real Blender 4.5.3 LTS (cube, sphere, cylinder, combined scene and empty scene). **25 local browser tests passed**, with 1 intentional skip for a touch-only test in the desktop profile. Android is Chromium/Pixel 7 emulation, including real touch-event orbit/pinch/picking, not a physical-device certification. Narrow 320 px layout, foldable viewport changes, lost-response recovery, portable projects, precise object targeting, version restoration, artifact access and the PNG fallback are covered. Database-v1 migration was tested with four simultaneously started Python processes.
 
-Runtime Python dependencies were updated after auditing the earlier Starlette pin. The final Python and production npm audits reported no known vulnerabilities. Both jobs passed in [run 39468862491](https://github.com/eNudimmud/Blender-Cloud-Agent/actions/runs/39468862491) at `894f644430d37a39122ccb6d50631a76f4d639ed`. The `containers` job built the service images, verified the configured isolation, rendered a real scene, checked restart persistence, verified TLS against a local test CA, and passed the same 17 browser tests over HTTPS. Docker checks ran in GitHub Actions; Docker is unavailable in the development environment.
+Runtime Python and production npm audits reported no known vulnerabilities. The preceding merged MVP passed both CI jobs at `0a322733d09a9a2838416300bbf13a017b939f81` in [run 39470070262](https://github.com/eNudimmud/Blender-Cloud-Agent/actions/runs/39470070262), including 88 Python tests, 17 browser tests in HTTP and HTTPS, real Docker isolation/render/restart checks and verified TLS with a local test CA. The selection/history follow-up extends that same workflow with 107 Python tests, 25 browser checks and restored-version persistence; consult its PR checks for the final tested SHA/outcome. Docker checks run in GitHub Actions; Docker is unavailable in the development environment.
 
 See [the detailed validation record](docs/VALIDATION.md) and [GitHub Actions](https://github.com/eNudimmud/Blender-Cloud-Agent/actions). Passing tests do not mean this service is already hosted or physically tested on Android.
 
@@ -54,7 +56,7 @@ Change sa taille à 3,5
 Supprime la sphère
 ```
 
-One action per message. A shape name targets the last matching object; an implicit target uses the last object. Unsupported requests return guidance instead of executing anything. Names and proposed object values can be inspected before confirmation. Rendering an empty scene is supported.
+One action per message. Select an object by tapping it or using **Objet à modifier** before an edit. With automatic targeting, a shape name targets the last matching object; an implicit target uses the last object. An explicit shape that contradicts the selected object is refused. Adding an object leaves existing objects unchanged. Unsupported requests return guidance instead of executing anything. Names and proposed object values can be inspected before confirmation. Rendering an empty scene is supported.
 
 ## Optional external AI
 
@@ -86,6 +88,7 @@ docs/           Architecture, validated scope, MCP study and U*TTU contract
 API schema: `/openapi.json`, scene schema: `/v1/schema/scene`, current capabilities: `/v1/capabilities`. Mutating project/chat/render requests use `Idempotency-Key`; revision conflicts return 409. The old synchronous `/v1/scenes` endpoint has been replaced by the asynchronous project/job API.
 
 - [HTTPS deployment and portable project recovery](docs/HTTPS_DEPLOYMENT.md)
+- [Mobile selection, version history and database upgrade](docs/MOBILE_EDITING.md)
 - [Architecture and security boundaries](docs/ARCHITECTURE.md)
 - [MCP-for-Blender assessment](docs/MCP_INTEGRATION.md): upstream explicitly refuses background mode and exposes arbitrary Python; it is not installed in this MVP.
 - [Future U*TTU Studio integration](docs/UTTU_INTEGRATION.md): server-side bearer adapter; no Studio repository modified.

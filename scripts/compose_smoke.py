@@ -50,6 +50,21 @@ with httpx.Client(base_url='http://127.0.0.1:8000', headers={'Authorization': 'B
         assert hashlib.sha256(response.content).hexdigest() == job['artifacts'][name]['sha256']
     print(json.dumps({'isolation': 'validated', 'blender': job['artifacts']['scene.glb']['blender_version'],
                       'project': p['id'], 'job': job['id'], 'artifacts': sorted(job['files'])}))
+    current = client.get(f"/v1/projects/{p['id']}").raise_for_status().json()
+    selected = client.post(f"/v1/projects/{p['id']}/chat", json={
+        'message': 'Change sa couleur en vert', 'revision': current['revision'],
+        'object_id': current['scene']['objects'][0]['id']},
+        headers={'Idempotency-Key': uuid.uuid4().hex}).raise_for_status().json()
+    assert selected['scene']['objects'][0]['color'] == '#77caba'
+    restore_headers = {'Idempotency-Key': uuid.uuid4().hex}
+    restore_body = {'revision': 2, 'source_revision': 1}
+    restored = client.post(f"/v1/projects/{p['id']}/restore", json=restore_body,
+                           headers=restore_headers).raise_for_status().json()
+    assert restored['revision'] == 3 and not restored['scene']['objects']
+    assert client.post(f"/v1/projects/{p['id']}/restore", json=restore_body,
+                       headers=restore_headers).raise_for_status().json() == restored
+    assert client.post(f"/v1/projects/{p['id']}/proposals/{selected['id']}/confirm").status_code == 409
+    assert len(client.get(f"/v1/projects/{p['id']}/jobs").raise_for_status().json()) == 1
     compose('restart', 'api', 'worker')
     deadline = time.monotonic() + 30
     while True:
@@ -59,7 +74,10 @@ with httpx.Client(base_url='http://127.0.0.1:8000', headers={'Authorization': 'B
         except httpx.HTTPError:
             assert time.monotonic() < deadline
             time.sleep(1)
-    assert persisted['revision'] == 2
+    assert persisted['revision'] == 3 and not persisted['scene']['objects']
+    versions = client.get(f"/v1/projects/{p['id']}/versions").raise_for_status().json()
+    assert [v['revision'] for v in versions] == [3, 2, 1]
+    assert versions[0]['restored_from'] == 1
     assert client.get(f"/v1/jobs/{job['id']}").json()['status'] == 'succeeded'
     assert client.get(job['files']['scene.glb']).status_code == 200
-    print('Container restart persistence: validated')
+    print('Container restart persistence, selection and idempotent history restore: validated')
