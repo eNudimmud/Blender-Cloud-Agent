@@ -57,6 +57,10 @@ test('mobile login, proposal review, render, persistence and downloads', async (
   await expect(page.locator('#canvas')).toHaveAttribute('data-model-loaded', 'true');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(errors).toEqual([]); expect(external).toEqual([]);
+  if (test.info().project.name === 'android-chromium') {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: 'test-results/android-workspace.png', fullPage: true });
+  }
 });
 
 test('touch orbit and pinch zoom on the proposed scene', async ({ page, context, isMobile }) => {

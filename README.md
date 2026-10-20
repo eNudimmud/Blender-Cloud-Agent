@@ -4,6 +4,8 @@ A personal 3D workspace operated from an Android browser. Blender runs on the se
 
 The MVP supports bounded primitive scenes, persistent projects, conversational proposals, touch previews, asynchronous CPU rendering, and authenticated `.blend` / `.glb` / PNG downloads. It is a **single-owner workspace**, not a public multi-tenant service or an unrestricted text-to-3D generator.
 
+[View the tested Android interface](docs/images/android-workspace.webp)
+
 ## What works
 
 - Save and rename projects; keep scene revisions, render snapshots, job status and conversation in SQLite on a persistent volume.

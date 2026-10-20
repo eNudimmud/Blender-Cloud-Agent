@@ -18,7 +18,7 @@ Baseline inspected: `e6fc08d51297d84e465633df27116356a95922c1` on `main`, with t
 | Touch viewer | Real synthetic touch orbit and two-touch pinch changed rendered screenshots | Emulated touch, not a physical phone/GPU certification |
 | Mobile UI | Full real-render/download/reload path, offline request replay, 320 px layout, inert text handling and real PNG fallback passed | No runtime third-party asset requests in the tested path; offline creation/render execution is not supported |
 | Runtime Python dependency audit | No known vulnerabilities reported after updating FastAPI/Starlette and pinning resolved runtime dependencies | Snapshot audit, not a security guarantee |
-| Production npm audit | No known vulnerabilities reported | Development dependencies audited separately by the package manager's current data |
+| Production npm audit | No known vulnerabilities reported | Production scope only; no development-dependency audit claimed |
 | Ruff / JS syntax / viewer build | Passed | Not an exhaustive product usability assessment |
 
 Blender archive checksum: `975c58fcb244273838534bba771e64ad87739216b0f9b39a888531a49a72d845`. The code asserts the tested Blender version in integration tests rather than silently accepting another binary.
