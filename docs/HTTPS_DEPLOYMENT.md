@@ -55,6 +55,8 @@ From Android, **Exporter le projet** downloads a portable `.bca.json` containing
 
 CI first tests the isolated Blender services and restart persistence. It then starts the actual proxy overlay using `deploy/compose.test.yml`, which switches only the certificate issuer to a local test CA. `scripts/https_smoke.py` loads that public CA certificate and verifies TLS normally; it checks HTTP→HTTPS redirects, secure HttpOnly cookies, Origin/CSRF refusal, spoofed address refusal, private API ports and portable project transfer. The browser suite also runs against those real HTTPS containers and their Blender worker.
 
+These checks passed in [run 39468862491](https://github.com/eNudimmud/Blender-Cloud-Agent/actions/runs/39468862491), commit `894f644430d37a39122ccb6d50631a76f4d639ed`: both CI jobs succeeded, including 17 browser passes over HTTPS and one intentional desktop touch skip. See [the validation record](VALIDATION.md) for the exact scope and fixture isolation.
+
 Chromium's HTTPS test profile accepts the local test certificate; Python independently validates its hostname/chain against the generated CA. No public ACME certificate, DNS change or external deployment is claimed by this test. `deploy/tls.internal.caddy` and `deploy/compose.test.yml` are CI fixtures and must not be used for the Android deployment. Android production needs the public configuration and a publicly trusted certificate; do not install the CI root CA on a user's phone.
 
 The resolved Compose configuration contains secrets. Use the helper or `docker compose config --quiet` to validate it, and do not publish the raw output. The public deployment itself still needs an existing server, DNS and access authorization; none has been connected or provisioned by this change.

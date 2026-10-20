@@ -21,7 +21,7 @@ The MVP supports bounded primitive scenes, persistent projects, conversational p
 
 On 2026-10-20: **88 Python tests passed**, including five executions of real Blender 4.5.3 LTS (cube, sphere, cylinder, combined scene and empty scene). **17 browser tests passed**, with 1 intentional skip for a touch-only test in the desktop profile. Android is Chromium/Pixel 7 emulation, including real touch-event orbit/pinch, not a physical-device certification. Narrow 320 px layout, foldable viewport changes, lost-response recovery, portable project export/import, restart persistence, artifact access and the PNG fallback are covered.
 
-Runtime Python dependencies were updated after auditing the earlier Starlette pin. The final local Python and production npm audits reported no known vulnerabilities. Docker is unavailable in the development environment; the dedicated GitHub Actions `containers` job builds the service images, verifies the configured isolation, renders a real scene, checks restart persistence, and exercises the HTTPS proxy and browser path with a local test certificate. Its actual run is the authority for container validation.
+Runtime Python dependencies were updated after auditing the earlier Starlette pin. The final Python and production npm audits reported no known vulnerabilities. Both jobs passed in [run 39468862491](https://github.com/eNudimmud/Blender-Cloud-Agent/actions/runs/39468862491) at `894f644430d37a39122ccb6d50631a76f4d639ed`. The `containers` job built the service images, verified the configured isolation, rendered a real scene, checked restart persistence, verified TLS against a local test CA, and passed the same 17 browser tests over HTTPS. Docker checks ran in GitHub Actions; Docker is unavailable in the development environment.
 
 See [the detailed validation record](docs/VALIDATION.md) and [GitHub Actions](https://github.com/eNudimmud/Blender-Cloud-Agent/actions). Passing tests do not mean this service is already hosted or physically tested on Android.
 
@@ -102,9 +102,13 @@ npm run build
 bash scripts/install_blender.sh /tmp/bca-blender
 BLENDER_BIN=/tmp/bca-blender/blender-4.5.3-linux-x64/blender .venv/bin/python -m pytest -q
 npx playwright install --with-deps chromium
-BLENDER_BIN=/tmp/bca-blender/blender-4.5.3-linux-x64/blender npm run test:e2e
+for profile in android-chromium desktop-chromium; do
+  BLENDER_BIN=/tmp/bca-blender/blender-4.5.3-linux-x64/blender BCA_E2E_OUTPUT="test-results/$profile" BCA_E2E_REPORT="playwright-report/$profile" npm run test:e2e -- --project="$profile"
+done
 .venv/bin/pip-audit -r requirements.txt --no-deps --disable-pip
 npm audit --omit=dev
 ```
 
 Without `BLENDER_BIN`, five real-Blender tests and the real-render browser cases skip explicitly. Running the Python worker directly is a developer harness, not OS isolation; production isolation is provided by Compose.
+
+Run browser profiles separately as above: each starts a fresh ephemeral API/worker workspace, so the automated suites do not consume each other's production request quota.
