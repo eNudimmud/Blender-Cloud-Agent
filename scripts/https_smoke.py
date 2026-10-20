@@ -24,6 +24,7 @@ assert not api['HostConfig']['PortBindings'], 'The API must not expose a host po
 assert proxy['Config']['User'] == '10001:10001'
 assert proxy['HostConfig']['ReadonlyRootfs'] and 'ALL' in proxy['HostConfig']['CapDrop']
 assert 'no-new-privileges:true' in proxy['HostConfig']['SecurityOpt']
+assert compose('exec', '-T', 'proxy', 'getcap', '/usr/bin/caddy') == ''
 assert worker['HostConfig']['NetworkMode'] == 'none'
 assert not any(value.startswith(('API_TOKEN=', 'LLM_API_KEY=', 'PROXY_SHARED_KEY=')) for value in worker['Config']['Env'])
 

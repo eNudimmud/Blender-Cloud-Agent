@@ -35,6 +35,13 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      # Loopback liveness only; https_smoke.py separately verifies the CA chain.
+      test: [CMD-SHELL, 'curl --fail --silent --insecure --connect-to "$${BCA_HOSTNAME}:443:127.0.0.1:8443" "https://$${BCA_HOSTNAME}/health"']
+      interval: 5s
+      timeout: 4s
+      retries: 15
+      start_period: 10s
 volumes:
   caddy-data:
   caddy-config:
