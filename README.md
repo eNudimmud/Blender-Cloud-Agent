@@ -1,19 +1,28 @@
-# Blender Cloud Agent
+# Blender Cloud Agent — Technical Alpha
 
-Mobile-first cloud Blender automation MVP.
+Mobile-first cloud Blender automation project. Initial milestone: deterministic Blender scene generation API (no LLM, GPU or paid provider).
 
-## Goal
-Create, inspect, revise and export a 3D scene from an Android browser, with no local Blender installation.
+## Run locally
 
-## MVP components
-- FastAPI backend for jobs and projects
-- Headless Blender worker isolated from API
-- Mobile PWA with chat and touch-enabled GLB preview
-- Deterministic scene operations before optional LLM integration
-- Versioned scene artifacts and explicit approval for paid execution
+```bash
+docker build -t blender-cloud-agent .
+docker run --rm -p 127.0.0.1:8000:8000 blender-cloud-agent
+```
 
-## Security
-Never execute generated Python in the API process. Isolate workers, restrict network access, enforce resource limits, and do not expose secrets to Blender.
+```bash
+curl -X POST http://127.0.0.1:8000/v1/scenes -H 'Content-Type: application/json' -d '{"shape":"cube","size":2}'
+```
 
-## Status
-Scaffolding in progress; not yet deployed.
+The response returns links to `scene.blend`, `scene.glb`, and `preview.png`. Shapes: cube, sphere, cylinder.
+
+## Limitations and safety
+
+**Local-only technical alpha; do not expose publicly.** This implementation is synchronous, has no authentication, queue, persistent database, mobile interface or resource quotas. Blender runs as a subprocess in the API container, **not** in a dedicated sandbox. A production deployment requires isolated workers, authentication, persistent jobs and limits. Blender is installed from the Debian package; pinning and compatibility validation are pending. The container build and end-to-end Blender generation have not yet been verified in CI.
+
+## Roadmap
+
+1. Worker isolation, durable jobs and artifact manifests.
+2. React mobile PWA and touch GLB viewer.
+3. Typed scene edits, versions and rollback.
+4. Optional LLM planner and MCP-for-Blender adapter.
+5. U*TTU Studio API integration.
